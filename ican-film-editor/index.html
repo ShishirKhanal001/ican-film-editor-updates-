@@ -431,9 +431,21 @@
       </div>
       <div class="modal-body">
 
-        <div class="settings-section-label">🎙️ Transcription</div>
+        <div class="settings-section-label">🎙️ Transcription (Speech → Text)</div>
         <div class="form-row">
-          <label>OpenAI API Key <span class="help-tip" title="Required for Whisper transcription (Amharic/Tigrinya)">?</span></label>
+          <label>Transcription Provider</label>
+          <select id="transcribeProvider">
+            <option value="groq">Groq — FREE (same Whisper model, no credit card)</option>
+            <option value="openai">OpenAI — Paid (~$0.006/min)</option>
+          </select>
+        </div>
+        <div id="groqKeyRow" class="form-row">
+          <label>Groq API Key <span class="help-tip" title="Free at groq.com — no credit card needed">?</span></label>
+          <input type="password" id="groqKey" placeholder="gsk_..." class="input-full" />
+          <div class="field-hint" style="color:var(--success)">✓ Free — sign up at <strong>groq.com</strong> → API Keys → Create key</div>
+        </div>
+        <div id="openaiKeyRow" class="form-row" style="display:none">
+          <label>OpenAI API Key</label>
           <input type="password" id="openaiKey" placeholder="sk-..." class="input-full" />
         </div>
 
@@ -492,6 +504,11 @@
         </div>
       </div>
       <div class="modal-footer">
+        <div style="display:flex;gap:6px;flex:1">
+          <button class="btn btn-sm ghost" id="btnExportSettings" title="Save settings to a file — share with coworkers">📤 Export</button>
+          <button class="btn btn-sm ghost" id="btnImportSettings" title="Load settings from a file">📥 Import</button>
+          <input type="file" id="importSettingsFile" accept=".json" style="display:none" />
+        </div>
         <button class="btn btn-primary" id="saveSettings">Save Settings</button>
       </div>
     </div>

@@ -15,30 +15,42 @@ let state = {
   viewMode: 'english'         // english | original | both
 };
 
-// ---- Provider UI toggle ----
+// ---- Provider UI toggles ----
 function updateProviderUI(provider) {
   document.getElementById('claudeKeyRow').style.display = provider === 'anthropic' ? 'flex' : 'none';
   document.getElementById('geminiKeyRow').style.display = provider === 'gemini'    ? 'flex' : 'none';
   document.getElementById('ollamaRow').style.display    = provider === 'ollama'    ? 'block' : 'none';
 }
 
+function updateTranscribeProviderUI(provider) {
+  document.getElementById('groqKeyRow').style.display   = provider === 'groq'   ? 'flex' : 'none';
+  document.getElementById('openaiKeyRow').style.display = provider === 'openai' ? 'flex' : 'none';
+}
+
 document.getElementById('aiProvider').addEventListener('change', function() {
   updateProviderUI(this.value);
+});
+
+document.getElementById('transcribeProvider').addEventListener('change', function() {
+  updateTranscribeProviderUI(this.value);
 });
 
 // ---- Load settings from localStorage ----
 function loadSettings() {
   try {
     state.settings = JSON.parse(localStorage.getItem('icanSettings') || '{}');
-    if (state.settings.openaiKey)    document.getElementById('openaiKey').value    = state.settings.openaiKey;
-    if (state.settings.anthropicKey) document.getElementById('anthropicKey').value = state.settings.anthropicKey;
-    if (state.settings.geminiKey)    document.getElementById('geminiKey').value    = state.settings.geminiKey;
-    if (state.settings.tempFolder)   document.getElementById('tempFolder').value   = state.settings.tempFolder;
-    if (state.settings.serverPort)   document.getElementById('serverPort').value   = state.settings.serverPort;
-    if (state.settings.aiProvider)   document.getElementById('aiProvider').value   = state.settings.aiProvider;
-    if (state.settings.ollamaModel)  document.getElementById('ollamaModel').value  = state.settings.ollamaModel;
-    if (state.settings.ollamaUrl)    document.getElementById('ollamaUrl').value    = state.settings.ollamaUrl;
+    if (state.settings.openaiKey)          document.getElementById('openaiKey').value          = state.settings.openaiKey;
+    if (state.settings.groqKey)            document.getElementById('groqKey').value            = state.settings.groqKey;
+    if (state.settings.anthropicKey)       document.getElementById('anthropicKey').value       = state.settings.anthropicKey;
+    if (state.settings.geminiKey)          document.getElementById('geminiKey').value          = state.settings.geminiKey;
+    if (state.settings.tempFolder)         document.getElementById('tempFolder').value         = state.settings.tempFolder;
+    if (state.settings.serverPort)         document.getElementById('serverPort').value         = state.settings.serverPort;
+    if (state.settings.aiProvider)         document.getElementById('aiProvider').value         = state.settings.aiProvider;
+    if (state.settings.transcribeProvider) document.getElementById('transcribeProvider').value = state.settings.transcribeProvider;
+    if (state.settings.ollamaModel)        document.getElementById('ollamaModel').value        = state.settings.ollamaModel;
+    if (state.settings.ollamaUrl)          document.getElementById('ollamaUrl').value          = state.settings.ollamaUrl;
     updateProviderUI(state.settings.aiProvider || 'anthropic');
+    updateTranscribeProviderUI(state.settings.transcribeProvider || 'groq');
 
     // Per-brand branding files
     const brand = state.settings.activeBrand || 'ican';
@@ -60,14 +72,16 @@ function saveSettings() {
   const existing = state.settings;
   state.settings = {
     ...existing,
-    openaiKey:    document.getElementById('openaiKey').value.trim(),
-    anthropicKey: document.getElementById('anthropicKey').value.trim(),
-    geminiKey:    document.getElementById('geminiKey').value.trim(),
-    tempFolder:   document.getElementById('tempFolder').value.trim(),
-    serverPort:   document.getElementById('serverPort').value.trim(),
-    aiProvider:   document.getElementById('aiProvider').value,
-    ollamaModel:  document.getElementById('ollamaModel').value,
-    ollamaUrl:    document.getElementById('ollamaUrl').value.trim() || 'http://localhost:11434',
+    openaiKey:          document.getElementById('openaiKey').value.trim(),
+    groqKey:            document.getElementById('groqKey').value.trim(),
+    anthropicKey:       document.getElementById('anthropicKey').value.trim(),
+    geminiKey:          document.getElementById('geminiKey').value.trim(),
+    tempFolder:         document.getElementById('tempFolder').value.trim(),
+    serverPort:         document.getElementById('serverPort').value.trim(),
+    aiProvider:         document.getElementById('aiProvider').value,
+    transcribeProvider: document.getElementById('transcribeProvider').value,
+    ollamaModel:        document.getElementById('ollamaModel').value,
+    ollamaUrl:          document.getElementById('ollamaUrl').value.trim() || 'http://localhost:11434',
   };
   localStorage.setItem('icanSettings', JSON.stringify(state.settings));
   updateApiStatusDots();
@@ -142,9 +156,11 @@ document.getElementById('btnTranscribe').addEventListener('click', async () => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        audioPath: exportResult.audioPath,
-        language: lang === 'auto' ? null : lang,
-        openaiKey: settings.openaiKey
+        audioPath:          exportResult.audioPath,
+        language:           lang === 'auto' ? null : lang,
+        transcribeProvider: settings.transcribeProvider || 'groq',
+        groqKey:            settings.groqKey,
+        openaiKey:          settings.openaiKey
       })
     });
 
@@ -867,23 +883,65 @@ document.getElementById('btnUpdate').addEventListener('click', async () => {
 
 // ---- API STATUS DOTS ----
 function updateApiStatusDots() {
-  const s        = state.settings;
-  const provider = s.aiProvider || 'anthropic';
-  const hasOpenai = !!(s.openaiKey);
+  const s = state.settings;
 
-  // AI provider key check
+  // Transcription key
+  const transcribeProvider = s.transcribeProvider || 'groq';
+  const hasTranscribeKey = transcribeProvider === 'groq' ? !!(s.groqKey) : !!(s.openaiKey);
+  const transcribeLabel  = transcribeProvider === 'groq' ? 'Groq' : 'Whisper';
+
+  // AI provider key
+  const aiProvider = s.aiProvider || 'anthropic';
   let hasAiKey = false;
   let aiLabel  = 'Claude';
-  if (provider === 'anthropic') { hasAiKey = !!(s.anthropicKey); aiLabel = 'Claude'; }
-  if (provider === 'gemini')    { hasAiKey = !!(s.geminiKey);    aiLabel = 'Gemini'; }
-  if (provider === 'ollama')    { hasAiKey = true;               aiLabel = 'Ollama'; } // no key needed
+  if (aiProvider === 'anthropic') { hasAiKey = !!(s.anthropicKey); aiLabel = 'Claude'; }
+  if (aiProvider === 'gemini')    { hasAiKey = !!(s.geminiKey);    aiLabel = 'Gemini'; }
+  if (aiProvider === 'ollama')    { hasAiKey = true;               aiLabel = 'Ollama'; }
 
   const dotO = document.getElementById('dotOpenai');
   const dotA = document.getElementById('dotAnthropic');
 
-  if (dotO) dotO.className = 'api-dot ' + (hasOpenai ? 'ok' : 'missing');
-  if (dotA) { dotA.className = 'api-dot ' + (hasAiKey ? 'ok' : 'missing'); dotA.textContent = aiLabel; }
+  if (dotO) { dotO.className = 'api-dot ' + (hasTranscribeKey ? 'ok' : 'missing'); dotO.textContent = transcribeLabel; }
+  if (dotA) { dotA.className = 'api-dot ' + (hasAiKey         ? 'ok' : 'missing'); dotA.textContent = aiLabel; }
 }
+
+// ---- Export / Import Settings (for team sharing) ----
+document.getElementById('btnExportSettings').addEventListener('click', () => {
+  // Export all settings EXCEPT sensitive keys — coworkers need their own keys
+  const exportable = { ...state.settings };
+  // Keep keys optional — user can choose to share them (they're in the exported file)
+  const blob = new Blob([JSON.stringify(exportable, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'ican-settings.json';
+  a.click();
+  URL.revokeObjectURL(a.href);
+  setStatus('Settings exported — share the file with your team', 'success');
+});
+
+document.getElementById('btnImportSettings').addEventListener('click', () => {
+  document.getElementById('importSettingsFile').click();
+});
+
+document.getElementById('importSettingsFile').addEventListener('change', function() {
+  const file = this.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    try {
+      const imported = JSON.parse(e.target.result);
+      state.settings = { ...state.settings, ...imported };
+      localStorage.setItem('icanSettings', JSON.stringify(state.settings));
+      loadSettings(); // refresh all fields
+      setStatus('Settings imported successfully', 'success');
+      closeModal('settingsModal');
+    } catch {
+      setStatus('Import failed — invalid settings file', 'error');
+    }
+  };
+  reader.readAsText(file);
+  this.value = ''; // reset so same file can be re-imported
+});
 
 // ---- Auto-Start Server ----
 // When the panel opens, automatically starts the Node.js server if it isn't running.
