@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "ICAN Film Editor Server",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["ican-film-editor/server/server.js"],
+      "port": 3737
+    }
+  ]
+}

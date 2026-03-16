@@ -1,0 +1,503 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>ICAN Film Editor</title>
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+
+  <!-- HEADER -->
+  <div class="header">
+    <div class="logo">
+      <img src="assets/logo.png" class="logo-img" alt="ICAN" />
+      <div class="logo-text-block">
+        <span class="logo-title">ICAN Film</span>
+        <span class="logo-sub">AI Editor</span>
+      </div>
+    </div>
+    <div class="brand-selector">
+      <select id="brandSelect">
+        <option value="ican">ICAN Film</option>
+        <option value="lucy">Lucy TV</option>
+      </select>
+    </div>
+  </div>
+
+  <!-- UPDATE BANNER (hidden until update found) -->
+  <div class="update-banner" id="updateBanner" style="display:none">
+    <span id="updateText">🎉 Update available!</span>
+    <button class="btn btn-sm" id="btnUpdate">Update Now</button>
+  </div>
+
+  <!-- RESTORE TRANSCRIPT BANNER -->
+  <div class="restore-banner" id="restoreBanner">
+    <span>💾 Unsaved transcript found — restore it?</span>
+    <div style="display:flex;gap:6px">
+      <button class="btn btn-sm" id="btnRestoreYes">Restore</button>
+      <button class="btn btn-xs ghost" id="btnRestoreNo">Dismiss</button>
+    </div>
+  </div>
+
+  <!-- API KEY STATUS -->
+  <div class="api-status-row" id="apiStatusRow">
+    <span class="api-dot" id="dotOpenai" title="OpenAI (Transcription)">Whisper</span>
+    <span class="api-dot" id="dotAnthropic" title="Anthropic Claude (Translation + Analysis)">Claude</span>
+  </div>
+
+  <!-- STATUS BAR -->
+  <div class="status-bar" id="statusBar">
+    <span id="statusIcon">●</span>
+    <span id="statusText">Ready</span>
+  </div>
+
+  <!-- PROGRESS BAR (hidden by default) -->
+  <div class="progress-container" id="progressContainer" style="display:none">
+    <div class="progress-bar">
+      <div class="progress-fill" id="progressFill"></div>
+    </div>
+    <span class="progress-label" id="progressLabel">Processing...</span>
+  </div>
+
+  <!-- TAB NAVIGATION -->
+  <div class="tab-nav">
+    <button class="tab-btn active" data-tab="transcribe">
+      <span class="tab-icon">🎙️</span>
+      <span>Transcribe</span>
+    </button>
+    <button class="tab-btn" data-tab="analyze">
+      <span class="tab-icon">🧠</span>
+      <span>Analyze</span>
+    </button>
+    <button class="tab-btn" data-tab="branding">
+      <span class="tab-icon">🎨</span>
+      <span>Branding</span>
+    </button>
+    <button class="tab-btn" data-tab="captions">
+      <span class="tab-icon">💬</span>
+      <span>Captions</span>
+    </button>
+    <button class="tab-btn" data-tab="audio">
+      <span class="tab-icon">🔊</span>
+      <span>Audio</span>
+    </button>
+  </div>
+
+  <!-- ===== TAB: TRANSCRIBE ===== -->
+  <div class="tab-content active" id="tab-transcribe">
+    <div class="section">
+      <h3 class="section-title">Language & Source</h3>
+      <div class="form-row">
+        <label>Primary Language</label>
+        <select id="sourceLang">
+          <option value="am">Amharic (አማርኛ)</option>
+          <option value="ti">Tigrinya (ትግርኛ)</option>
+          <option value="auto">Auto-Detect</option>
+          <option value="ar">Arabic</option>
+          <option value="fr">French</option>
+          <option value="es">Spanish</option>
+          <option value="so">Somali</option>
+          <option value="sw">Swahili</option>
+        </select>
+      </div>
+      <div class="form-row">
+        <label>Translate To</label>
+        <select id="targetLang">
+          <option value="en">English</option>
+          <option value="fr">French</option>
+        </select>
+      </div>
+      <div class="form-row">
+        <label>Source</label>
+        <select id="audioSource">
+          <option value="timeline">Active Sequence (Timeline)</option>
+          <option value="selection">Selected Clips Only</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="btn-group">
+      <button class="btn btn-primary btn-large" id="btnTranscribe">
+        🎙️ Start Transcription
+      </button>
+    </div>
+
+    <!-- Script Editor -->
+    <div class="section" id="scriptSection" style="display:none">
+      <div class="section-header">
+        <h3 class="section-title">Script</h3>
+        <div class="toggle-group">
+          <button class="toggle-btn active" id="toggleEnglish">English</button>
+          <button class="toggle-btn" id="toggleOriginal">Original</button>
+          <button class="toggle-btn" id="toggleBoth">Both</button>
+        </div>
+      </div>
+
+      <div class="script-toolbar">
+        <input type="text" id="searchScript" placeholder="🔍 Search transcript..." class="search-input" />
+        <button class="btn btn-sm" id="btnExportScript">📄 TXT</button>
+        <button class="btn btn-sm" id="btnExportSrt">📝 SRT</button>
+        <button class="btn btn-sm" id="btnCopyScript">📋 Copy</button>
+      </div>
+
+      <div class="script-container" id="scriptContainer">
+        <!-- Script lines injected here by JS -->
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== TAB: ANALYZE ===== -->
+  <div class="tab-content" id="tab-analyze">
+
+    <div class="notice" id="analyzeNotice">
+      <span>⚠️</span> Please complete transcription first before analyzing.
+    </div>
+
+    <div class="section" id="analyzePanel" style="display:none">
+      <h3 class="section-title">AI Analysis Options</h3>
+
+      <div class="analyze-options">
+        <label class="checkbox-row">
+          <input type="checkbox" id="optSummary" checked />
+          <span>📋 Timeline Summary</span>
+        </label>
+        <label class="checkbox-row">
+          <input type="checkbox" id="optHighlights" checked />
+          <span>⭐ Find Catchy Highlights</span>
+        </label>
+        <label class="checkbox-row">
+          <input type="checkbox" id="optFillers" checked />
+          <span>✂️ Detect Fillers & Dead Air</span>
+        </label>
+        <label class="checkbox-row">
+          <input type="checkbox" id="optReels" checked />
+          <span>📱 Suggest Vertical Reels</span>
+        </label>
+      </div>
+
+      <div class="form-row" id="reelCountRow">
+        <label>Number of Reels to Create</label>
+        <div class="number-input-row">
+          <button class="btn btn-sm" id="reelMinus">−</button>
+          <span id="reelCount">2</span>
+          <button class="btn btn-sm" id="reelPlus">+</button>
+        </div>
+      </div>
+
+      <button class="btn btn-primary btn-large" id="btnAnalyze">
+        🧠 Run AI Analysis
+      </button>
+    </div>
+
+    <!-- Analysis Results -->
+    <div class="section" id="analysisResults" style="display:none">
+
+      <!-- Summary -->
+      <div class="result-block" id="summaryBlock">
+        <div class="result-header">
+          <span>📋 Summary</span>
+          <button class="btn btn-xs" id="copySummary">Copy</button>
+        </div>
+        <p class="summary-text" id="summaryText"></p>
+      </div>
+
+      <!-- Highlights -->
+      <div class="result-block" id="highlightsBlock">
+        <div class="result-header">
+          <span>⭐ Highlights</span>
+          <button class="btn btn-xs" id="markHighlights">Mark in Timeline</button>
+        </div>
+        <div class="result-list" id="highlightsList"></div>
+      </div>
+
+      <!-- Fillers -->
+      <div class="result-block" id="fillersBlock">
+        <div class="result-header">
+          <span>✂️ Fillers to Remove</span>
+          <div>
+            <button class="btn btn-xs" id="selectAllFillers">All</button>
+            <button class="btn btn-xs danger" id="cutSelectedFillers">Cut Selected</button>
+          </div>
+        </div>
+        <div class="result-list" id="fillersList"></div>
+      </div>
+
+      <!-- Reels -->
+      <div class="result-block" id="reelsBlock">
+        <div class="result-header">
+          <span>📱 Reel Suggestions</span>
+        </div>
+        <div class="result-list" id="reelsList"></div>
+        <button class="btn btn-primary btn-full" id="btnCreateReels">
+          ✂️ Create Reel Sequences
+        </button>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ===== TAB: BRANDING ===== -->
+  <div class="tab-content" id="tab-branding">
+    <div class="section">
+      <h3 class="section-title">Branding Preset</h3>
+      <div class="form-row">
+        <label>Active Brand</label>
+        <select id="brandingPreset">
+          <option value="ican">ICAN Film</option>
+          <option value="lucy">Lucy TV</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="section">
+      <h3 class="section-title">Horizontal Videos</h3>
+      <div class="file-slot" id="slotHIntro">
+        <span class="file-slot-label">▶ Horizontal Intro</span>
+        <span class="file-slot-name" id="hIntroName">No file selected</span>
+        <button class="btn btn-sm" data-slot="hIntro">Browse</button>
+      </div>
+      <div class="file-slot" id="slotHOutro">
+        <span class="file-slot-label">■ Horizontal Outro</span>
+        <span class="file-slot-name" id="hOutroName">No file selected</span>
+        <button class="btn btn-sm" data-slot="hOutro">Browse</button>
+      </div>
+    </div>
+
+    <div class="section">
+      <h3 class="section-title">Vertical Videos (Reels)</h3>
+      <div class="file-slot" id="slotVIntro">
+        <span class="file-slot-label">▶ Vertical Intro</span>
+        <span class="file-slot-name" id="vIntroName">No file selected</span>
+        <button class="btn btn-sm" data-slot="vIntro">Browse</button>
+      </div>
+      <div class="file-slot" id="slotVOutro">
+        <span class="file-slot-label">■ Vertical Outro</span>
+        <span class="file-slot-name" id="vOutroName">No file selected</span>
+        <button class="btn btn-sm" data-slot="vOutro">Browse</button>
+      </div>
+    </div>
+
+    <div class="section">
+      <h3 class="section-title">Gap Between Clips</h3>
+      <div class="form-row">
+        <label>Gap (seconds)</label>
+        <input type="number" id="brandGap" value="1" min="0" max="10" step="0.5" class="input-small" />
+      </div>
+    </div>
+
+    <div class="btn-group">
+      <button class="btn btn-sm" id="btnSaveBrandPreset">💾 Save Preset</button>
+      <button class="btn btn-primary" id="btnApplyBranding">🎨 Apply Branding</button>
+    </div>
+  </div>
+
+  <!-- ===== TAB: CAPTIONS ===== -->
+  <div class="tab-content" id="tab-captions">
+
+    <div class="notice" id="captionsNotice">
+      <span>⚠️</span> Please complete transcription first to generate captions.
+    </div>
+
+    <div id="captionsPanel" style="display:none">
+      <div class="section">
+        <h3 class="section-title">Caption Style</h3>
+        <div class="form-row">
+          <label>Preset</label>
+          <select id="captionPreset">
+            <option value="clean">Clean White</option>
+            <option value="shadow">White with Shadow</option>
+            <option value="box">White Box</option>
+            <option value="highlight">Highlight Word</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label>Font Size</label>
+          <input type="range" id="captionFontSize" min="20" max="80" value="42" />
+          <span id="captionFontSizeVal">42px</span>
+        </div>
+        <div class="form-row">
+          <label>Position</label>
+          <select id="captionPosition">
+            <option value="bottom">Bottom (Horizontal)</option>
+            <option value="center">Center</option>
+            <option value="top">Top</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label>Max Words Per Caption</label>
+          <select id="captionWordsPerLine">
+            <option value="3">3 words</option>
+            <option value="5" selected>5 words</option>
+            <option value="7">7 words</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label>Language to Caption</label>
+          <select id="captionLang">
+            <option value="en">English (Translated)</option>
+            <option value="original">Original Language</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="btn-group">
+        <button class="btn btn-primary btn-large" id="btnAddCaptions">
+          💬 Add Captions to Timeline
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== TAB: AUDIO ===== -->
+  <div class="tab-content" id="tab-audio">
+    <div class="section">
+      <h3 class="section-title">Audio Plugin Chains</h3>
+      <p class="section-desc">Set up your Waves plugin chains once, then apply with one click to all audio tracks.</p>
+
+      <div class="form-row">
+        <label>Active Preset</label>
+        <select id="audioPreset">
+          <option value="dialogue">Dialogue (Voice)</option>
+          <option value="music">Music</option>
+          <option value="sfx">SFX / Ambience</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="section">
+      <h3 class="section-title">Plugin Chain — Dialogue</h3>
+      <div class="plugin-chain" id="pluginChainDialogue">
+        <div class="plugin-slot" data-index="0">
+          <span class="plugin-slot-num">1</span>
+          <input type="text" class="plugin-name-input" placeholder="e.g. Waves NS1 Noise Suppressor" value="Waves NS1 Noise Suppressor" />
+          <button class="btn btn-xs danger remove-plugin">✕</button>
+        </div>
+        <div class="plugin-slot" data-index="1">
+          <span class="plugin-slot-num">2</span>
+          <input type="text" class="plugin-name-input" placeholder="e.g. Waves CLA-2A" value="Waves CLA-2A Compressor" />
+          <button class="btn btn-xs danger remove-plugin">✕</button>
+        </div>
+        <div class="plugin-slot" data-index="2">
+          <span class="plugin-slot-num">3</span>
+          <input type="text" class="plugin-name-input" placeholder="e.g. Waves H-EQ" value="Waves H-EQ Hybrid Equalizer" />
+          <button class="btn btn-xs danger remove-plugin">✕</button>
+        </div>
+        <div class="plugin-slot" data-index="3">
+          <span class="plugin-slot-num">4</span>
+          <input type="text" class="plugin-name-input" placeholder="e.g. Waves L2 Ultramaximizer" value="Waves L2 Ultramaximizer" />
+          <button class="btn btn-xs danger remove-plugin">✕</button>
+        </div>
+      </div>
+      <button class="btn btn-sm" id="btnAddPlugin">+ Add Plugin</button>
+    </div>
+
+    <div class="section">
+      <h3 class="section-title">Apply To</h3>
+      <div class="analyze-options">
+        <label class="checkbox-row">
+          <input type="checkbox" id="applyDialogueTracks" checked />
+          <span>All Dialogue / Voice Tracks</span>
+        </label>
+        <label class="checkbox-row">
+          <input type="checkbox" id="applyMusicTracks" />
+          <span>Music Tracks</span>
+        </label>
+        <label class="checkbox-row">
+          <input type="checkbox" id="applySfxTracks" />
+          <span>SFX Tracks</span>
+        </label>
+      </div>
+    </div>
+
+    <div class="btn-group">
+      <button class="btn btn-sm" id="btnSaveAudioPreset">💾 Save Chain</button>
+      <button class="btn btn-primary" id="btnApplyAudio">🔊 Apply Plugin Chain</button>
+    </div>
+  </div>
+
+  <!-- SETTINGS FOOTER -->
+  <div class="footer">
+    <button class="btn btn-xs ghost" id="btnSettings">⚙️ Settings</button>
+    <span class="version-label" id="versionLabel">v1.0.0</span>
+  </div>
+
+  <!-- SETTINGS MODAL -->
+  <div class="modal-overlay" id="settingsModal" style="display:none">
+    <div class="modal">
+      <div class="modal-header">
+        <h3>⚙️ Settings</h3>
+        <button class="btn btn-xs" id="closeSettings">✕</button>
+      </div>
+      <div class="modal-body">
+
+        <div class="settings-section-label">🎙️ Transcription</div>
+        <div class="form-row">
+          <label>OpenAI API Key <span class="help-tip" title="Required for Whisper transcription (Amharic/Tigrinya)">?</span></label>
+          <input type="password" id="openaiKey" placeholder="sk-..." class="input-full" />
+        </div>
+
+        <div class="settings-section-label">🤖 AI Provider — Translation &amp; Analysis</div>
+        <div class="form-row">
+          <label>Provider</label>
+          <select id="aiProvider">
+            <option value="anthropic">Claude — Anthropic (Recommended)</option>
+            <option value="gemini">Gemini — Google (Workspace)</option>
+            <option value="ollama">Ollama — Free &amp; Local (no API cost)</option>
+          </select>
+        </div>
+
+        <div id="claudeKeyRow" class="form-row">
+          <label>Anthropic Claude API Key</label>
+          <input type="password" id="anthropicKey" placeholder="sk-ant-..." class="input-full" />
+        </div>
+
+        <div id="geminiKeyRow" class="form-row" style="display:none">
+          <label>Google Gemini API Key</label>
+          <input type="password" id="geminiKey" placeholder="AIza..." class="input-full" />
+          <div class="field-hint">Get from console.cloud.google.com → Gemini API</div>
+        </div>
+
+        <div id="ollamaRow" style="display:none">
+          <div class="form-row">
+            <label>Ollama Model</label>
+            <select id="ollamaModel">
+              <option value="llama3.2">llama3.2 — Fast, good quality</option>
+              <option value="mistral">mistral — Good multilingual</option>
+              <option value="gemma2">gemma2 — Google's free model</option>
+              <option value="aya">aya — Best for African languages</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <label>Ollama Server URL</label>
+            <input type="text" id="ollamaUrl" placeholder="http://localhost:11434" class="input-full" />
+          </div>
+          <div class="field-hint" style="color:var(--success)">
+            ✓ Free — runs on your PC. Install from <strong>ollama.com</strong><br>
+            Then open a terminal and run: <code>ollama pull llama3.2</code>
+          </div>
+        </div>
+
+        <div class="settings-section-label">🗂️ Advanced</div>
+        <div class="form-row">
+          <label>Temp Folder (for audio export)</label>
+          <div class="input-browse-row">
+            <input type="text" id="tempFolder" placeholder="C:\Users\..." class="input-full" />
+            <button class="btn btn-sm" id="browseTempFolder">Browse</button>
+          </div>
+        </div>
+        <div class="form-row">
+          <label>Server Port</label>
+          <input type="number" id="serverPort" value="3737" class="input-small" />
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-primary" id="saveSettings">Save Settings</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="js/CSInterface.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>

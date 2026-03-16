@@ -1,0 +1,14 @@
+# Node packages — installed automatically by npm install
+node_modules/
+ican-film-editor/server/node_modules/
+
+# Temp / system files
+*.log
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Temp audio exports
+*.tmp
+ican_audio_export_*
+ican_mixdown*

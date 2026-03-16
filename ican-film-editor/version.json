@@ -1,0 +1,7 @@
+{
+  "version": "1.0.0",
+  "channel": "stable",
+  "releaseDate": "2026-03-16",
+  "releaseNotes": "Initial release — Transcription, Translation, AI Analysis, Reels, Branding, Captions, Audio. Supports Claude, Gemini, and Ollama.",
+  "updateUrl": "https://raw.githubusercontent.com/ShishirKhanal001/ican-film-editor-updates-/main/version.json"
+}
