@@ -8,6 +8,9 @@ ican-film-editor/server/node_modules/
 Thumbs.db
 desktop.ini
 
+# FFmpeg binary — downloaded automatically by installer
+ican-film-editor/server/bin/
+
 # Temp audio exports
 *.tmp
 ican_audio_export_*
