@@ -1,7 +1,5 @@
 # ============================================================
 #  ICAN Film Editor -- Automated Installer
-#  Double-click INSTALL.bat to run this.
-#  Everything is handled automatically.
 # ============================================================
 
 $Host.UI.RawUI.WindowTitle = "ICAN Film Editor -- Installer"
@@ -16,26 +14,35 @@ $DESKTOP      = [Environment]::GetFolderPath("Desktop")
 function Write-Header {
     Clear-Host
     Write-Host ""
-    Write-Host "  ============================================" -ForegroundColor Red
-    Write-Host "   ICAN Film Editor -- Automated Installer   " -ForegroundColor Red
-    Write-Host "  ============================================" -ForegroundColor Red
+    Write-Host "  +------------------------------------------+" -ForegroundColor Red
+    Write-Host "  |                                          |" -ForegroundColor Red
+    Write-Host "  |      ICAN FILM EDITOR  v1.0.0            |" -ForegroundColor Red
+    Write-Host "  |      Automated Installer                 |" -ForegroundColor Red
+    Write-Host "  |                                          |" -ForegroundColor Red
+    Write-Host "  +------------------------------------------+" -ForegroundColor Red
+    Write-Host ""
+    Write-Host "  This will install everything automatically." -ForegroundColor Gray
+    Write-Host "  Please wait and do not close this window." -ForegroundColor Gray
     Write-Host ""
 }
 
 function Write-Step($num, $text) {
-    Write-Host "  [$num] $text" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "  ------------------------------------------" -ForegroundColor DarkGray
+    Write-Host "  STEP $num  |  $text" -ForegroundColor Cyan
+    Write-Host "  ------------------------------------------" -ForegroundColor DarkGray
 }
 
 function Write-OK($text) {
-    Write-Host "      [OK] $text" -ForegroundColor Green
+    Write-Host "  [OK]  $text" -ForegroundColor Green
 }
 
 function Write-Info($text) {
-    Write-Host "       ->  $text" -ForegroundColor DarkGray
+    Write-Host "   ...  $text" -ForegroundColor Gray
 }
 
 function Write-Warn($text) {
-    Write-Host "      [!]  $text" -ForegroundColor Yellow
+    Write-Host "  [!!]  $text" -ForegroundColor Yellow
 }
 
 function Pause-Step($text) {
@@ -48,7 +55,7 @@ function Pause-Step($text) {
 Write-Header
 
 # ---- STEP 1: Check for Node.js ----
-Write-Step "1/5" "Checking Node.js..."
+Write-Step "1/5" "Checking Node.js"
 
 $nodeVersion = $null
 try { $nodeVersion = (node --version 2>$null) } catch {}
@@ -65,22 +72,22 @@ if (-not $nodeVersion) {
         $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
         $nodeVersion = (node --version 2>$null)
         Remove-Item $nodeInstaller -Force -ErrorAction SilentlyContinue
-        Write-OK "Node.js $nodeVersion installed"
+        Write-OK "Node.js $nodeVersion installed successfully"
     } catch {
-        Write-Host "  [FAIL] Could not auto-install Node.js." -ForegroundColor Red
-        Write-Host "  Please download from https://nodejs.org then re-run INSTALL.bat" -ForegroundColor Yellow
+        Write-Host "  [FAIL]  Could not auto-install Node.js." -ForegroundColor Red
+        Write-Host "          Download manually from https://nodejs.org then re-run INSTALL.bat" -ForegroundColor Yellow
         Pause-Step "Press any key to exit."
         exit 1
     }
 } else {
-    Write-OK "Node.js $nodeVersion already installed"
+    Write-OK "Node.js $nodeVersion is already installed"
 }
 
 # ---- STEP 2: Install FFmpeg ----
-Write-Step "2/5" "Checking FFmpeg..."
+Write-Step "2/5" "Checking FFmpeg"
 
 if (-not (Test-Path $FFMPEG_BIN)) {
-    Write-Warn "FFmpeg not found. Downloading..."
+    Write-Warn "FFmpeg not found. Downloading now..."
     $ffmpegZip = "$env:TEMP\ffmpeg.zip"
     $ffmpegUrl = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
 
@@ -97,7 +104,7 @@ if (-not (Test-Path $FFMPEG_BIN)) {
             $binDir = "$SERVER_DIR\bin"
             if (-not (Test-Path $binDir)) { New-Item -ItemType Directory -Path $binDir -Force | Out-Null }
             Copy-Item $ffmpegExe.FullName -Destination $FFMPEG_BIN -Force
-            Write-OK "FFmpeg installed to plugin folder"
+            Write-OK "FFmpeg installed successfully"
         } else {
             throw "ffmpeg.exe not found in archive"
         }
@@ -106,22 +113,27 @@ if (-not (Test-Path $FFMPEG_BIN)) {
         Remove-Item $extractPath -Recurse -Force -ErrorAction SilentlyContinue
     } catch {
         Write-Warn "Could not auto-install FFmpeg: $_"
-        Write-Warn "The plugin will still work but audio extraction may be limited."
+        Write-Warn "Plugin will still work but audio export may be limited."
     }
 } else {
-    Write-OK "FFmpeg already installed"
+    Write-OK "FFmpeg is already installed"
 }
 
 # ---- STEP 3: Install Node.js packages ----
-Write-Step "3/5" "Installing AI packages..."
-Write-Info "Running npm install in server folder..."
+Write-Step "3/5" "Installing AI packages"
+Write-Info "Installing npm packages (Claude, Gemini, Ollama support)..."
 
 try {
-    $npmResult = & npm install --prefix "$SERVER_DIR" 2>&1
-    & npm install adm-zip --prefix "$SERVER_DIR" --save 2>&1 | Out-Null
-    Write-OK "All packages installed (Claude + Gemini + Ollama support)"
+    # Use Push-Location to avoid issues with spaces in folder names
+    Push-Location "$SERVER_DIR"
+    & npm install 2>&1 | Out-Null
+    & npm install adm-zip --save 2>&1 | Out-Null
+    Pop-Location
+    Write-OK "All AI packages installed successfully"
 } catch {
-    Write-Host "  [FAIL] npm install failed: $_" -ForegroundColor Red
+    try { Pop-Location } catch {}
+    Write-Host "  [FAIL]  npm install failed: $_" -ForegroundColor Red
+    Write-Host "          Make sure Node.js is installed and try again." -ForegroundColor Yellow
     Pause-Step "Press any key to exit."
     exit 1
 }
@@ -135,14 +147,14 @@ if (-not (Test-Path $csInterfaceDest)) {
         Invoke-WebRequest -Uri $csUrl -OutFile $csInterfaceDest -UseBasicParsing -ErrorAction Stop
         Write-OK "CSInterface.js downloaded"
     } catch {
-        Write-Warn "Could not download CSInterface.js -- using bundled version (this is fine)"
+        Write-Warn "Could not download CSInterface.js -- bundled version will be used (this is fine)"
     }
 } else {
     Write-OK "CSInterface.js already present"
 }
 
 # ---- STEP 4: Enable CEP extensions in Premiere Pro ----
-Write-Step "4/5" "Enabling Premiere Pro extensions..."
+Write-Step "4/5" "Enabling Premiere Pro extensions"
 
 try {
     foreach ($ver in @("9","10","11","12","13")) {
@@ -150,15 +162,15 @@ try {
         if (-not (Test-Path $regPath)) { New-Item -Path $regPath -Force | Out-Null }
         Set-ItemProperty -Path $regPath -Name "PlayerDebugMode" -Value "1" -Type String -Force
     }
-    Write-OK "Premiere Pro extension mode enabled"
+    Write-OK "Premiere Pro extension mode enabled (all versions)"
 } catch {
     Write-Warn "Could not set registry automatically."
-    Write-Warn "If the plugin does not appear in Premiere, run this manually:"
+    Write-Warn "If the plugin does not appear in Premiere, run this in Command Prompt:"
     Write-Warn "  reg add HKCU\SOFTWARE\Adobe\CSXS.11 /v PlayerDebugMode /t REG_SZ /d 1 /f"
 }
 
 # ---- STEP 5: Copy plugin to Adobe extensions folder ----
-Write-Step "5/5" "Installing plugin into Premiere Pro..."
+Write-Step "5/5" "Installing plugin into Premiere Pro"
 
 try {
     if (-not (Test-Path "$env:APPDATA\Adobe\CEP\extensions")) {
@@ -166,15 +178,15 @@ try {
     }
 
     if (Test-Path $ADOBE_EXT) {
+        Write-Info "Removing old version..."
         Remove-Item $ADOBE_EXT -Recurse -Force
     }
 
-    Write-Info "Copying plugin files..."
+    Write-Info "Copying plugin files to Premiere Pro..."
     Copy-Item -Path $PLUGIN_DIR -Destination $ADOBE_EXT -Recurse -Force
-
     Write-OK "Plugin installed to Premiere Pro"
 } catch {
-    Write-Host "  [FAIL] Could not copy plugin: $_" -ForegroundColor Red
+    Write-Host "  [FAIL]  Could not copy plugin: $_" -ForegroundColor Red
     Pause-Step "Press any key to exit."
     exit 1
 }
@@ -199,21 +211,25 @@ try {
 
 # ---- Done! ----
 Write-Host ""
-Write-Host "  ============================================" -ForegroundColor Green
-Write-Host "  [OK] ICAN Film Editor installed!           " -ForegroundColor Green
-Write-Host "  ============================================" -ForegroundColor Green
+Write-Host "  +------------------------------------------+" -ForegroundColor Green
+Write-Host "  |                                          |" -ForegroundColor Green
+Write-Host "  |   ICAN Film Editor installed!            |" -ForegroundColor Green
+Write-Host "  |                                          |" -ForegroundColor Green
+Write-Host "  +------------------------------------------+" -ForegroundColor Green
 Write-Host ""
-Write-Host "  HOW TO USE EVERY DAY:" -ForegroundColor White
+Write-Host "  HOW TO USE:" -ForegroundColor White
+Write-Host ""
 Write-Host "  1. Open Adobe Premiere Pro" -ForegroundColor Cyan
-Write-Host "  2. Go to:  Window > Extensions > ICAN Film Editor" -ForegroundColor Cyan
+Write-Host "  2. Go to:  Window  >  Extensions  >  ICAN Film Editor" -ForegroundColor Cyan
 Write-Host "  3. The server starts automatically when the panel opens" -ForegroundColor Cyan
-Write-Host "  4. Click Settings (gear icon) and enter your API keys (first time only)" -ForegroundColor Cyan
+Write-Host "  4. Click the gear icon (Settings) and enter your API keys" -ForegroundColor Cyan
+Write-Host "     (only needed the first time)" -ForegroundColor DarkGray
 Write-Host ""
-Write-Host "  API KEYS NEEDED:" -ForegroundColor White
-Write-Host "  * OpenAI    -> platform.openai.com/api-keys" -ForegroundColor DarkGray
-Write-Host "  * Anthropic -> console.anthropic.com  (Claude API)" -ForegroundColor DarkGray
-Write-Host "  * OR Gemini -> console.cloud.google.com (free with Workspace)" -ForegroundColor DarkGray
+Write-Host "  API KEYS (get these free, enter them in Settings):" -ForegroundColor White
+Write-Host "  * OpenAI    ->  platform.openai.com/api-keys" -ForegroundColor DarkGray
+Write-Host "  * Anthropic ->  console.anthropic.com" -ForegroundColor DarkGray
+Write-Host "  * OR Gemini ->  console.cloud.google.com  (free with Google Workspace)" -ForegroundColor DarkGray
 Write-Host ""
-Write-Host "  Cost per 60-min episode: ~0.50 USD" -ForegroundColor DarkGray
+Write-Host "  Cost per 60-min episode: approx 0.50 USD" -ForegroundColor DarkGray
 Write-Host ""
-Pause-Step "Installation complete. Press any key to close."
+Pause-Step "Installation complete! Press any key to close."
