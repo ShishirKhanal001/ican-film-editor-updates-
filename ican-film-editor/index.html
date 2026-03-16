@@ -117,10 +117,31 @@
       </div>
     </div>
 
-    <div class="btn-group">
+    <div class="btn-group" style="flex-direction:column;gap:6px">
       <button class="btn btn-primary btn-large" id="btnTranscribe">
         🎙️ Start Transcription
       </button>
+      <button class="btn btn-sm" id="btnImportPPTranscript" style="width:100%;justify-content:center">
+        📥 Import from Premiere Pro Transcript
+      </button>
+    </div>
+
+    <!-- Audio file import -->
+    <div class="section" id="manualAudioSection">
+      <h3 class="section-title">Audio File</h3>
+      <div class="field-hint" style="margin-bottom:8px">
+        In Premiere: <strong>File → Export → Media</strong> → Format: <strong>MP3</strong> → Export.<br>
+        Then browse to that file and click Transcribe.
+      </div>
+      <div id="manualAudioBody">
+        <div class="input-browse-row">
+          <input type="text" id="manualAudioPath" placeholder="Select exported MP3/WAV..." class="input-full" readonly />
+          <button class="btn btn-sm" id="btnBrowseAudio">Browse</button>
+        </div>
+        <div style="margin-top:6px">
+          <button class="btn btn-primary" id="btnTranscribeManual" style="width:100%">🎙️ Transcribe This File</button>
+        </div>
+      </div>
     </div>
 
     <!-- Script Editor -->
@@ -206,7 +227,7 @@
       <div class="result-block" id="highlightsBlock">
         <div class="result-header">
           <span>⭐ Highlights</span>
-          <button class="btn btn-xs" id="markHighlights">Mark in Timeline</button>
+          <button class="btn btn-xs" id="markHighlights">📍 Mark In/Out in Timeline</button>
         </div>
         <div class="result-list" id="highlightsList"></div>
       </div>
@@ -243,7 +264,7 @@
       <h3 class="section-title">Branding Preset</h3>
       <div class="form-row">
         <label>Active Brand</label>
-        <select id="brandingPreset">
+        <select id="brandingPreset" disabled title="Controlled by the brand selector in the header">
           <option value="ican">ICAN Film</option>
           <option value="lucy">Lucy TV</option>
         </select>
@@ -352,67 +373,50 @@
   <!-- ===== TAB: AUDIO ===== -->
   <div class="tab-content" id="tab-audio">
     <div class="section">
-      <h3 class="section-title">Audio Plugin Chains</h3>
-      <p class="section-desc">Set up your Waves plugin chains once, then apply with one click to all audio tracks.</p>
+      <h3 class="section-title">Track Mixer — Plugin Chains</h3>
+      <p class="section-desc">Assign audio plugins to each track's mixer. Click "Load Tracks" to see your timeline's audio tracks.</p>
+      <button class="btn btn-sm" id="btnLoadTracks" style="width:100%;justify-content:center;margin-bottom:8px">🔄 Load Tracks from Timeline</button>
+    </div>
 
+    <!-- Track mixer grid - populated dynamically -->
+    <div id="trackMixerContainer">
+      <!-- Will be populated with track rows when user clicks Load Tracks -->
+      <div class="section" style="text-align:center;color:var(--text-muted);padding:20px">
+        Click "Load Tracks" to see your audio tracks
+      </div>
+    </div>
+
+    <div class="section">
+      <h3 class="section-title">Quick Add Plugin</h3>
+      <div class="input-browse-row" style="margin-bottom:8px">
+        <input type="text" id="pluginSearch" placeholder="Search plugin name..." class="input-full" />
+      </div>
+      <div class="field-hint">Type a plugin name (e.g. "Waves NS1") and drag it to a track above, or select a track and click Add.</div>
+      <div class="form-row" style="margin-top:6px">
+        <label>Add to Track</label>
+        <select id="pluginTargetTrack" class="input-full">
+          <option value="all">All Tracks</option>
+        </select>
+      </div>
+      <button class="btn btn-sm" id="btnAddPluginToTrack" style="width:100%;justify-content:center;margin-top:6px">+ Add Plugin to Track</button>
+    </div>
+
+    <div class="section">
+      <h3 class="section-title">Saved Presets</h3>
       <div class="form-row">
         <label>Active Preset</label>
         <select id="audioPreset">
           <option value="dialogue">Dialogue (Voice)</option>
           <option value="music">Music</option>
           <option value="sfx">SFX / Ambience</option>
+          <option value="custom">Custom</option>
         </select>
       </div>
     </div>
 
-    <div class="section">
-      <h3 class="section-title">Plugin Chain — Dialogue</h3>
-      <div class="plugin-chain" id="pluginChainDialogue">
-        <div class="plugin-slot" data-index="0">
-          <span class="plugin-slot-num">1</span>
-          <input type="text" class="plugin-name-input" placeholder="e.g. Waves NS1 Noise Suppressor" value="Waves NS1 Noise Suppressor" />
-          <button class="btn btn-xs danger remove-plugin">✕</button>
-        </div>
-        <div class="plugin-slot" data-index="1">
-          <span class="plugin-slot-num">2</span>
-          <input type="text" class="plugin-name-input" placeholder="e.g. Waves CLA-2A" value="Waves CLA-2A Compressor" />
-          <button class="btn btn-xs danger remove-plugin">✕</button>
-        </div>
-        <div class="plugin-slot" data-index="2">
-          <span class="plugin-slot-num">3</span>
-          <input type="text" class="plugin-name-input" placeholder="e.g. Waves H-EQ" value="Waves H-EQ Hybrid Equalizer" />
-          <button class="btn btn-xs danger remove-plugin">✕</button>
-        </div>
-        <div class="plugin-slot" data-index="3">
-          <span class="plugin-slot-num">4</span>
-          <input type="text" class="plugin-name-input" placeholder="e.g. Waves L2 Ultramaximizer" value="Waves L2 Ultramaximizer" />
-          <button class="btn btn-xs danger remove-plugin">✕</button>
-        </div>
-      </div>
-      <button class="btn btn-sm" id="btnAddPlugin">+ Add Plugin</button>
-    </div>
-
-    <div class="section">
-      <h3 class="section-title">Apply To</h3>
-      <div class="analyze-options">
-        <label class="checkbox-row">
-          <input type="checkbox" id="applyDialogueTracks" checked />
-          <span>All Dialogue / Voice Tracks</span>
-        </label>
-        <label class="checkbox-row">
-          <input type="checkbox" id="applyMusicTracks" />
-          <span>Music Tracks</span>
-        </label>
-        <label class="checkbox-row">
-          <input type="checkbox" id="applySfxTracks" />
-          <span>SFX Tracks</span>
-        </label>
-      </div>
-    </div>
-
     <div class="btn-group">
-      <button class="btn btn-sm" id="btnSaveAudioPreset">💾 Save Chain</button>
-      <button class="btn btn-primary" id="btnApplyAudio">🔊 Apply Plugin Chain</button>
+      <button class="btn btn-sm" id="btnSaveAudioPreset">💾 Save Preset</button>
+      <button class="btn btn-primary" id="btnApplyAudio">🔊 Apply to Track Mixer</button>
     </div>
   </div>
 
@@ -453,13 +457,18 @@
         <div class="form-row">
           <label>Provider</label>
           <select id="aiProvider">
-            <option value="anthropic">Claude — Anthropic (Recommended)</option>
+            <option value="groq">Groq — FREE (uses your Groq key above)</option>
+            <option value="anthropic">Claude — Anthropic (Best quality, paid)</option>
             <option value="gemini">Gemini — Google (Workspace)</option>
             <option value="ollama">Ollama — Free &amp; Local (no API cost)</option>
           </select>
         </div>
 
-        <div id="claudeKeyRow" class="form-row">
+        <div id="groqAiRow" class="form-row">
+          <div class="field-hint" style="color:var(--success)">✓ Uses your Groq key from above — same free account, no extra cost!</div>
+        </div>
+
+        <div id="claudeKeyRow" class="form-row" style="display:none">
           <label>Anthropic Claude API Key</label>
           <input type="password" id="anthropicKey" placeholder="sk-ant-..." class="input-full" />
         </div>
@@ -474,10 +483,10 @@
           <div class="form-row">
             <label>Ollama Model</label>
             <select id="ollamaModel">
-              <option value="llama3.2">llama3.2 — Fast, good quality</option>
+              <option value="aya">aya — Best for Amharic/Tigrinya (Recommended)</option>
+              <option value="llama3.2">llama3.2 — Fast, good general quality</option>
               <option value="mistral">mistral — Good multilingual</option>
               <option value="gemma2">gemma2 — Google's free model</option>
-              <option value="aya">aya — Best for African languages</option>
             </select>
           </div>
           <div class="form-row">
@@ -492,11 +501,12 @@
 
         <div class="settings-section-label">🗂️ Advanced</div>
         <div class="form-row">
-          <label>Temp Folder (for audio export)</label>
+          <label>Temp Folder <span style="font-weight:400;color:var(--text-secondary)">(optional)</span></label>
           <div class="input-browse-row">
-            <input type="text" id="tempFolder" placeholder="C:\Users\..." class="input-full" />
+            <input type="text" id="tempFolder" placeholder="Leave blank — auto-uses system temp folder" class="input-full" />
             <button class="btn btn-sm" id="browseTempFolder">Browse</button>
           </div>
+          <div class="field-hint">Only set this if audio export fails or you want files saved elsewhere.</div>
         </div>
         <div class="form-row">
           <label>Server Port</label>

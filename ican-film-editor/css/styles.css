@@ -484,20 +484,22 @@ input[type="range"] { flex: 1; accent-color: var(--red); }
 .script-text-block { flex: 1; }
 
 .script-english {
-  font-size: 11px;
-  color: var(--text-primary);
+  font-size: 13px;
+  color: #FFFFFF;
   margin-bottom: 3px;
   outline: none;
   width: 100%;
   background: transparent;
   border: none;
   border-bottom: 1px solid transparent;
-  padding: 1px 2px;
+  padding: 2px 3px;
   border-radius: 2px;
+  font-weight: 500;
+  line-height: 1.5;
 }
 
 .script-english:focus { border-bottom-color: var(--red); background: var(--red-glow); }
-.script-original { font-size: 10px; color: var(--text-muted); font-style: italic; }
+.script-original { font-size: 12px; color: #BBBBBB; font-style: italic; line-height: 1.4; }
 
 /* ================================================
    ANALYZE / RESULTS
@@ -899,3 +901,75 @@ body:not([data-brand="lucy"]) .update-banner {
 
 .modal-tab-content { display: none; }
 .modal-tab-content.active { display: block; }
+
+/* ================================================
+   TRACK MIXER (Audio tab)
+   ================================================ */
+.track-mixer-row {
+  background: var(--bg-section);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: 8px;
+  overflow: hidden;
+}
+
+.track-mixer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: var(--bg-card);
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+}
+
+.track-mixer-header:hover { background: var(--bg-hover); }
+
+.track-mixer-name {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.track-mixer-badge {
+  font-size: 9px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: var(--red-glow);
+  color: var(--red);
+  border: 1px solid var(--red-dark);
+  font-weight: 700;
+}
+
+.track-mixer-plugins {
+  padding: 6px 10px;
+}
+
+.track-plugin-slot {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  margin-bottom: 4px;
+}
+
+.track-plugin-slot .plugin-slot-num {
+  width: 16px;
+  height: 16px;
+  font-size: 8px;
+}
+
+.track-plugin-slot input {
+  flex: 1;
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 11px;
+  outline: none;
+}
+.track-plugin-slot input:focus { color: var(--text-primary); }
+
+.track-plugin-slot .btn-xs { padding: 1px 5px; font-size: 8px; }

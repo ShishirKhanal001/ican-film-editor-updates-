@@ -19,6 +19,11 @@ function hostBridge(funcName, paramsJson) {
       case 'applyAudioChain':     result = applyAudioChain(params); break;
       case 'browseForFile':       result = browseForFile(params); break;
       case 'browseForFolder':     result = browseForFolder(params); break;
+      case 'getProjectFolder':    result = getProjectFolder(params); break;
+      case 'importPPTranscript':  result = importPPTranscript(params); break;
+      case 'getAudioTrackInfo':   result = getAudioTrackInfo(params); break;
+      case 'applyTrackMixerPlugins': result = applyTrackMixerPlugins(params); break;
+      case 'addRangeMarkers':     result = addRangeMarkers(params); break;
       default: result = { success: false, error: 'Unknown function: ' + funcName };
     }
     return JSON.stringify(result);
@@ -41,79 +46,71 @@ function getActiveSequence() {
 // Strategy 2: Collect source file paths → let Node/FFmpeg extract audio directly
 // Strategy 3: Use Premiere's built-in audio mixdown API
 function exportTimelineAudio(params) {
-  var tempFolder = params.tempFolder || Folder.temp.fsName;
-  var seq        = getActiveSequence();
-  var outputPath = tempFolder.replace(/[\\\/]$/, '') + '/ican_audio_export_' + Date.now() + '.mp3';
-  var outputFile = new File(outputPath);
-
-  // --- Strategy 1: Adobe Media Encoder ---
-  try {
-    if (app.encoder) {
-      // Open AME in background mode
-      app.encoder.launchEncoder();
-      var preset = findAudioPreset();
-      app.encoder.encodeSequence(
-        seq,
-        outputFile.fsName,
-        'MP3',
-        preset,
-        1  // Remove from queue when done
-      );
-      // Wait for encoding (polling — max 10 min for long videos)
-      var waited = 0;
-      while (!outputFile.exists && waited < 600) {
-        $.sleep(1000);
-        waited++;
-      }
-      if (outputFile.exists) {
-        return { success: true, audioPath: outputFile.fsName, method: 'AME' };
-      }
-    }
-  } catch(e1) {
-    // AME failed — fall through to next strategy
-  }
-
-  // --- Strategy 2: Collect source video paths (let server FFmpeg extract) ---
-  // This is the most reliable fallback for long videos
-  var sourcePaths = getSequenceSourcePaths(seq, params.source);
-  if (sourcePaths.length > 0) {
-    return {
-      success:        true,
-      audioPath:      null,
-      sourcePaths:    sourcePaths,
-      useSourceFiles: true,
-      outputPath:     outputPath,
-      method:         'source-files'
-    };
-  }
-
-  // --- Strategy 3: Premiere mixdown (Premiere Pro 2022+) ---
-  try {
-    var mixdownPath = tempFolder.replace(/[\\\/]$/, '') + '/ican_mixdown.wav';
-    seq.exportAsMixdown(mixdownPath);
-    var mf = new File(mixdownPath);
+  // If user manually provided an audio file path, use it directly
+  if (params.manualAudioPath) {
+    var mf = new File(params.manualAudioPath);
     if (mf.exists) {
-      return { success: true, audioPath: mixdownPath, method: 'mixdown' };
+      return { success: true, audioPath: mf.fsName, method: 'manual' };
     }
-  } catch(e3) {}
+    return { success: false, error: 'File not found: ' + params.manualAudioPath };
+  }
 
+  // Use user-set temp folder, or the Premiere project folder, or system temp
+  var tempFolder = params.tempFolder;
+  if (!tempFolder || tempFolder === '') {
+    try {
+      var projFile = new File(app.project.path);
+      tempFolder = projFile.parent.fsName + '/ICAN Temp';
+      var tmpDir = new Folder(tempFolder);
+      if (!tmpDir.exists) tmpDir.create();
+    } catch(e) {
+      tempFolder = Folder.temp.fsName;
+    }
+  }
+
+  var seq = getActiveSequence();
+  var base = tempFolder.replace(/[\\\/]+$/, '');
+  var outputPath = base + '/ican_' + Date.now() + '.mp3';
+
+  // --- Strategy 1: exportAsMixdown (Premiere Pro 2022+) ---
+  // Synchronous, exports full timeline audio mix. No AME dialog.
+  try {
+    var wavFile = new File(base + '/ican_' + Date.now() + '.wav');
+    seq.exportAsMixdown(wavFile.fsName);
+    if (wavFile.exists) {
+      return { success: true, audioPath: wavFile.fsName, method: 'mixdown' };
+    }
+  } catch(e1) {}
+
+  // --- Strategy 2: AME queue (returns immediately — JS side polls for file) ---
+  // Don't call launchEncoder() — just queue and let AME run in background.
+  // AME may open its window briefly; it will export and close automatically.
+  try {
+    var outFile = new File(outputPath);
+    app.encoder.encodeSequence(
+      seq,
+      outFile.fsName,
+      '',   // default preset (audio)
+      1,    // remove from queue when done
+      1     // start immediately
+    );
+    // Return right away — JS will poll the server for file existence
+    return {
+      success:    true,
+      pending:    true,
+      audioPath:  outFile.fsName,
+      method:     'AME-background'
+    };
+  } catch(e2) {}
+
+  // --- Fallback: manual export ---
   return {
-    success: false,
-    error:   'Could not export audio automatically. Please set a Temp Folder in Settings and ensure Adobe Media Encoder is installed.'
+    success:           false,
+    needsManualExport: true,
+    error:             'All auto-export methods failed. Please export audio manually from Premiere Pro.'
   };
 }
 
-function findAudioPreset() {
-  // Try common audio-only preset names across Premiere versions
-  var names = ['MP3 - 128 kbps', 'Audio Only', 'MP3', 'AAC Audio'];
-  try {
-    var presets = app.encoder.getPresets();
-    for (var i = 0; i < names.length; i++) {
-      if (presets && presets[names[i]]) return presets[names[i]];
-    }
-  } catch(e) {}
-  return ''; // Let AME use default
-}
 
 // ---- Get all source file paths from the sequence ----
 function getSequenceSourcePaths(seq, sourceMode) {
@@ -396,10 +393,8 @@ function applyBranding(params) {
 }
 
 // ---- Add captions to the timeline ----
-// Tries 3 methods in order:
-//   1. Premiere Pro Caption Track (SRT-style) — PP 2022+
-//   2. Essential Graphics / MoGraph text clips — PP 2018+
-//   3. Marker-based fallback (any version, visible in timeline)
+// Uses timeline markers which work on ALL Premiere versions.
+// User can convert markers to captions via: Captions panel → Create Captions from Sequence Markers
 function addCaptions(params) {
   try {
     var seq          = getActiveSequence();
@@ -430,73 +425,41 @@ function addCaptions(params) {
 
     if (!chunks.length) return { success: false, error: 'No caption text to add' };
 
-    // ---- Method 1: Native Captions Track (Premiere 2022+) ----
-    var usedCaptionTrack = false;
+    // Clear previous ICAN caption markers first
     try {
-      if (seq.captionTracks !== undefined) {
-        // Create a new SRT-style caption track
-        seq.createCaptionTrack('SRT', 0);
-        var ct = seq.captionTracks[seq.captionTracks.numTracks - 1];
-        if (ct) {
-          for (var ci = 0; ci < chunks.length; ci++) {
-            var startT = new Time(); startT.seconds = chunks[ci].startSec;
-            var endT   = new Time(); endT.seconds   = chunks[ci].endSec;
-            ct.insertClip(chunks[ci].text, startT, endT);
-            totalAdded++;
-          }
-          usedCaptionTrack = true;
-        }
-      }
-    } catch(e1) {}
-
-    // ---- Method 2: Essential Graphics text clips ----
-    if (!usedCaptionTrack) {
-      try {
-        // Add a new video track for captions
-        seq.videoTracks.add();
-        var captTrack = seq.videoTracks[seq.videoTracks.numTracks - 1];
-
-        for (var gi = 0; gi < chunks.length; gi++) {
-          var ch   = chunks[gi];
-          var gStart = new Time(); gStart.seconds = ch.startSec;
-          var gEnd   = new Time(); gEnd.seconds   = ch.endSec;
-          var duration = new Time(); duration.seconds = ch.endSec - ch.startSec;
-
-          // Create a MoGraph/Essential Graphics text clip
-          captTrack.overwriteClip(
-            qe.project.getMotionGraphicsTemplate('Caption'),
-            gStart
-          );
-          totalAdded++;
-        }
-      } catch(e2) {
-        usedCaptionTrack = false; // fall through to marker method
-      }
-    }
-
-    // ---- Method 3: Marker fallback (always works, any Premiere version) ----
-    if (!usedCaptionTrack && totalAdded === 0) {
-      // Remove any previous ICAN caption markers
       var existingMarkers = seq.markers;
-      // Add caption markers — user can export these as SRT via Premiere's built-in tool
-      for (var mi = 0; mi < chunks.length; mi++) {
-        var mk = seq.markers.createMarker(chunks[mi].startSec);
-        mk.name = chunks[mi].text;
-        mk.comments = '[CAPTION]';
-        mk.colorByIndex = 7; // white markers
-        var mkEnd = new Time(); mkEnd.seconds = chunks[mi].endSec;
-        mk.end = mkEnd;
-        totalAdded++;
+      var toRemove = [];
+      for (var ri = existingMarkers.numMarkers - 1; ri >= 0; ri--) {
+        var em = existingMarkers[ri];
+        if (em && em.comments === '[CAPTION]') toRemove.push(em);
       }
+      for (var rj = 0; rj < toRemove.length; rj++) {
+        toRemove[rj].remove();
+      }
+    } catch(cleanErr) {}
+
+    // Add caption markers — colour-coded by style preset
+    var colorMap = { clean: 7, shadow: 7, box: 6, highlight: 2 }; // white, cyan, orange
+    var colorId  = colorMap[style.preset] || 7;
+
+    for (var mi = 0; mi < chunks.length; mi++) {
+      var mk = seq.markers.createMarker(chunks[mi].startSec);
+      mk.name = chunks[mi].text;
+      mk.comments = '[CAPTION]';
+      mk.colorByIndex = colorId;
+      try {
+        var mkEnd = new Time();
+        mkEnd.seconds = chunks[mi].endSec;
+        mk.end = mkEnd;
+      } catch(endErr) {}
+      totalAdded++;
     }
 
     return {
       success:  true,
-      method:   usedCaptionTrack ? 'caption-track' : 'markers',
+      method:   'markers',
       count:    totalAdded,
-      note:     usedCaptionTrack
-                  ? 'Captions added to dedicated caption track'
-                  : 'Captions added as timeline markers. To convert: Captions panel \u2192 Create Captions from Sequence Markers.'
+      note:     'Captions added as ' + totalAdded + ' timeline markers. To make them visible: Captions panel → Create Captions from Sequence Markers.'
     };
   } catch(e) {
     return { success: false, error: e.toString() };
@@ -546,8 +509,17 @@ function applyAudioChain(params) {
 
 // ---- File browser ----
 function browseForFile(params) {
-  var filter = params.filter ? params.filter.join(', ') : 'All files';
-  var f = File.openDialog('Select media file', filter, false);
+  var filter;
+  if (params && params.filter) {
+    // If filter is an array of extensions (e.g. ['mp4','mov']), build a display string
+    if (typeof params.filter === 'object' && params.filter.join) {
+      filter = 'Media Files:*.' + params.filter.join(';*.');
+    } else {
+      // String filter like "Audio Files:*.mp3;*.wav"
+      filter = params.filter;
+    }
+  }
+  var f = File.openDialog('Select file', filter);
   if (f) return { success: true, path: f.fsName };
   return { success: false, path: null };
 }
@@ -556,6 +528,19 @@ function browseForFolder(params) {
   var folder = Folder.selectDialog('Select folder');
   if (folder) return { success: true, path: folder.fsName };
   return { success: false, path: null };
+}
+
+function getProjectFolder(params) {
+  try {
+    var projFile = new File(app.project.path);
+    var folder   = projFile.parent.fsName;
+    var tempPath = folder + '\\ICAN Temp';
+    var tempDir  = new Folder(tempPath);
+    if (!tempDir.exists) tempDir.create();
+    return { success: true, projectFolder: folder, tempPath: tempPath };
+  } catch(e) {
+    return { success: false, projectFolder: '', tempPath: '' };
+  }
 }
 
 // ---- Helpers ----
@@ -664,4 +649,152 @@ function prependClip(proj, seq, filePath) {
 
 function appendClip(proj, seq, filePath) {
   importAndInsert(proj, seq, filePath, getSequenceDuration(seq));
+}
+
+// ---- Import Premiere Pro's built-in transcript ----
+// Reads markers from the sequence that were created by Premiere's transcription tool.
+// Falls back to reading captions if available.
+function importPPTranscript(params) {
+  try {
+    var seq = getActiveSequence();
+    var segments = [];
+
+    // Read all markers from the sequence
+    var markers = seq.markers;
+    if (markers && markers.numMarkers > 0) {
+      for (var i = 0; i < markers.numMarkers; i++) {
+        var m = markers[i];
+        if (m.comments === '[CAPTION]') continue; // Skip our own caption markers
+        var startSec = m.start ? m.start.seconds : 0;
+        var endSec = m.end ? m.end.seconds : (startSec + 3);
+        if (m.name && m.name.trim().length > 0) {
+          segments.push({
+            timeSec: startSec,
+            endSec: endSec,
+            original: m.name,
+            english: m.name
+          });
+        }
+      }
+    }
+
+    // Also check for caption tracks if available
+    try {
+      if (seq.captionTracks && seq.captionTracks.numTracks > 0) {
+        for (var ct = 0; ct < seq.captionTracks.numTracks; ct++) {
+          var track = seq.captionTracks[ct];
+          if (track.clips) {
+            for (var cc = 0; cc < track.clips.numItems; cc++) {
+              var clip = track.clips[cc];
+              segments.push({
+                timeSec: clip.start ? clip.start.seconds : 0,
+                endSec: clip.end ? clip.end.seconds : 0,
+                original: clip.name || '',
+                english: clip.name || ''
+              });
+            }
+          }
+        }
+      }
+    } catch(capErr) {}
+
+    segments.sort(function(a, b) { return a.timeSec - b.timeSec; });
+
+    return { success: true, segments: segments, count: segments.length };
+  } catch(e) {
+    return { success: false, error: e.toString(), segments: [] };
+  }
+}
+
+// ---- Get audio track info for track mixer UI ----
+function getAudioTrackInfo(params) {
+  try {
+    var seq = getActiveSequence();
+    var tracks = [];
+    for (var t = 0; t < seq.audioTracks.numTracks; t++) {
+      var track = seq.audioTracks[t];
+      tracks.push({
+        index: t,
+        name: track.name || ('A' + (t + 1)),
+        muted: track.isMuted ? track.isMuted() : false
+      });
+    }
+    // Also get master/mix track info
+    tracks.push({
+      index: -1,
+      name: 'Mix (Master)',
+      muted: false
+    });
+    return { success: true, tracks: tracks };
+  } catch(e) {
+    return { success: false, error: e.toString(), tracks: [] };
+  }
+}
+
+// ---- Apply audio plugins to track mixer ----
+function applyTrackMixerPlugins(params) {
+  try {
+    var seq = getActiveSequence();
+    var assignments = params.assignments; // [{trackIndex: 0, plugins: ['name1', 'name2']}, ...]
+    var applied = 0;
+    var errors = [];
+
+    for (var a = 0; a < assignments.length; a++) {
+      var assignment = assignments[a];
+      var trackIdx = assignment.trackIndex;
+      if (trackIdx < 0 || trackIdx >= seq.audioTracks.numTracks) continue;
+
+      var track = seq.audioTracks[trackIdx];
+      var plugins = assignment.plugins;
+
+      for (var p = 0; p < plugins.length; p++) {
+        try {
+          // addAudioEffect adds to the track mixer, not individual clips
+          track.addAudioEffect(plugins[p]);
+          applied++;
+        } catch(plugErr) {
+          errors.push('Track ' + track.name + ': "' + plugins[p] + '" not found');
+        }
+      }
+    }
+
+    return {
+      success: true,
+      applied: applied,
+      errors: errors.length > 0 ? errors.join('; ') : null
+    };
+  } catch(e) {
+    return { success: false, error: e.toString() };
+  }
+}
+
+// ---- Add range markers (for highlights with in/out points) ----
+function addRangeMarkers(params) {
+  try {
+    var seq = getActiveSequence();
+    var items = params.items; // [{startSec, endSec, name, color}]
+    var colorMap = { yellow: 0, red: 1, orange: 2, green: 3, blue: 4, purple: 5, cyan: 6, white: 7 };
+    var added = 0;
+
+    for (var i = 0; i < items.length; i++) {
+      var item = items[i];
+      var marker = seq.markers.createMarker(item.startSec);
+      marker.name = item.name || ('Highlight ' + (i + 1));
+      marker.comments = item.reason || '';
+      marker.colorByIndex = colorMap[item.color] || 0;
+
+      // Set marker duration to cover the full range (in → out)
+      try {
+        var endTime = new Time();
+        endTime.seconds = item.endSec;
+        marker.end = endTime;
+      } catch(endErr) {}
+
+      added++;
+    }
+
+    return { success: true, count: added };
+  } catch(e) {
+    return { success: false, error: e.toString() };
+  }
 }

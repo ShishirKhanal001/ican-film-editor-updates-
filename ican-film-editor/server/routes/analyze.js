@@ -1,6 +1,6 @@
 /**
  * AI Analysis Route
- * Providers: Claude (Anthropic) | Gemini (Google) | Ollama (free local LLM)
+ * Providers: Claude (Anthropic) | Groq (FREE) | Gemini (Google) | Ollama (free local LLM)
  * Analyzes transcript for: summary, highlights, fillers, reel suggestions
  */
 
@@ -11,8 +11,8 @@ router.post('/', async (req, res) => {
   const {
     segments, options,
     anthropicKey,
-    geminiKey,
-    provider,       // 'anthropic' | 'gemini' | 'ollama'
+    geminiKey, groqKey,
+    provider,       // 'anthropic' | 'groq' | 'gemini' | 'ollama'
     ollamaModel, ollamaUrl
   } = req.body;
 
@@ -20,7 +20,7 @@ router.post('/', async (req, res) => {
     return res.status(400).json({ error: 'No transcript segments provided.' });
   }
 
-  const resolvedProvider = provider || (geminiKey ? 'gemini' : 'anthropic');
+  const resolvedProvider = provider || (groqKey ? 'groq' : geminiKey ? 'gemini' : 'anthropic');
 
   // Build transcript text + prompt
   const transcriptText = segments
@@ -35,7 +35,7 @@ router.post('/', async (req, res) => {
   if (options.summary)    taskList.push('1. SUMMARY: A 2-3 sentence summary of the entire content');
   if (options.highlights) taskList.push('2. HIGHLIGHTS: The most engaging/catchy/important moments');
   if (options.fillers)    taskList.push('3. FILLERS: Filler words, long pauses, repeated phrases to remove');
-  if (options.reels)      taskList.push(`4. REELS: The best ${options.reelCount || 2} clips (15-90 seconds) for vertical social media Reels/TikTok/Shorts`);
+  if (options.reels)      taskList.push(`4. REELS: The best ${options.reelCount || 2} clips for vertical social media Reels/TikTok/Shorts. EACH REEL MUST BE 60-90 SECONDS LONG (minimum 60 seconds, maximum 90 seconds). Pick moments with a complete story arc.`);
 
   const prompt = `You are a professional video editor's AI assistant analyzing a timestamped transcript.
 
@@ -58,13 +58,19 @@ Respond ONLY with a valid JSON object (no markdown, no extra text):
 RULES:
 - All times in seconds matching transcript timestamps
 - Empty arrays [] for items not requested
-- Reels should be self-contained stories that work without context
-- Fillers: "um", "uh", repeated sentences, very long gaps`;
+- REELS MUST be 60-90 seconds each (endSec - startSec must be >= 60 and <= 90). This is mandatory.
+- Reels should be self-contained stories/moments that work without context
+- Highlights should be the most engaging, emotional, or impactful moments (10-30 seconds each)
+- Fillers: "um", "uh", repeated sentences, very long silent gaps, off-topic rambling`;
 
   try {
     let rawResponse;
 
-    if (resolvedProvider === 'gemini') {
+    if (resolvedProvider === 'groq') {
+      if (!groqKey) return res.status(400).json({ error: 'Groq API key required.' });
+      rawResponse = await analyzeWithGroq(groqKey, prompt);
+
+    } else if (resolvedProvider === 'gemini') {
       if (!geminiKey) return res.status(400).json({ error: 'Google Gemini API key required.' });
       rawResponse = await analyzeWithGemini(geminiKey, prompt);
 
@@ -99,7 +105,24 @@ RULES:
     }
     if (analysisData.reels) {
       analysisData.reels = analysisData.reels
-        .map((r, i) => ({ ...r, startSec: clamp(r.startSec), endSec: clamp(r.endSec), title: r.title || `Reel ${i + 1}` }))
+        .map((r, i) => {
+          let start = clamp(r.startSec);
+          let end   = clamp(r.endSec);
+          const duration = end - start;
+          // Enforce minimum 60 seconds — extend end if too short
+          if (duration < 60) {
+            end = Math.min(totalDuration, start + 60);
+            // If still too short (near end of video), shift start back
+            if (end - start < 60) {
+              start = Math.max(0, end - 60);
+            }
+          }
+          // Cap at 90 seconds
+          if (end - start > 90) {
+            end = start + 90;
+          }
+          return { ...r, startSec: start, endSec: end, title: r.title || `Reel ${i + 1}` };
+        })
         .slice(0, options.reelCount || 10);
     }
 
@@ -125,13 +148,64 @@ async function analyzeWithClaude(apiKey, prompt) {
   return message.content[0].text.trim();
 }
 
+// ---- Groq — tries best available multilingual model ----
+const GROQ_ANALYZE_MODELS = [
+  'meta-llama/llama-4-scout-17b-16e-instruct',
+  'qwen/qwen3-32b',
+  'llama-3.3-70b-versatile',
+  'llama3-70b-8192'
+];
+
+async function analyzeWithGroq(apiKey, prompt) {
+  const OpenAI = require('openai');
+  const client = new OpenAI({ apiKey, baseURL: 'https://api.groq.com/openai/v1' });
+
+  for (const modelName of GROQ_ANALYZE_MODELS) {
+    try {
+      console.log(`[Analyze/Groq] Trying model: ${modelName}...`);
+      const response = await client.chat.completions.create({
+        model:       modelName,
+        messages:    [
+          { role: 'system', content: 'You are a professional video editor AI. Respond ONLY with valid JSON. No markdown, no code blocks.' },
+          { role: 'user', content: prompt }
+        ],
+        max_tokens:  4096,
+        temperature: 0.2
+      });
+      console.log(`[Analyze/Groq] Success with ${modelName}`);
+      return response.choices[0].message.content.trim();
+    } catch (e) {
+      console.log(`[Analyze/Groq] ${modelName} failed: ${e.message.substring(0, 80)}`);
+      if (!e.message.includes('429') && !e.message.includes('rate_limit') && !e.message.includes('model_not_found')) {
+        throw e;
+      }
+    }
+  }
+  throw new Error('All Groq models failed — check your API key or try again later.');
+}
+
 // ---- Gemini ----
+const GEMINI_MODELS = ['gemini-2.0-flash-lite', 'gemini-2.0-flash', 'gemini-1.5-flash'];
+
 async function analyzeWithGemini(apiKey, prompt) {
   const { GoogleGenerativeAI } = require('@google/generative-ai');
-  const model = new GoogleGenerativeAI(apiKey).getGenerativeModel({ model: 'gemini-1.5-pro' });
-  console.log('[Analyze/Gemini] Sending...');
-  const response = await model.generateContent(prompt);
-  return response.response.text().trim();
+  const genAI = new GoogleGenerativeAI(apiKey);
+
+  for (const modelName of GEMINI_MODELS) {
+    try {
+      const model = genAI.getGenerativeModel({ model: modelName });
+      console.log(`[Analyze/Gemini] Trying model: ${modelName}...`);
+      const response = await model.generateContent(prompt);
+      console.log(`[Analyze/Gemini] Success with ${modelName}`);
+      return response.response.text().trim();
+    } catch (e) {
+      console.log(`[Analyze/Gemini] ${modelName} failed: ${e.message.substring(0, 80)}`);
+      if (!e.message.includes('429') && !e.message.includes('404') && !e.message.includes('not found')) {
+        throw e; // Non-model/quota error — don't retry
+      }
+    }
+  }
+  throw new Error('All Gemini models failed — your free quota may be exhausted. Switch to Ollama (free local) in Settings, or enable billing on Google AI Studio.');
 }
 
 // ---- Ollama ----

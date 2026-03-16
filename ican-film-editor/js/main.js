@@ -12,11 +12,18 @@ let state = {
   reelCount: 2,
   brandingFiles: { hIntro: null, hOutro: null, vIntro: null, vOutro: null },
   settings: {},
-  viewMode: 'english'         // english | original | both
+  viewMode: 'english',        // english | original | both
+  projectFolder: null          // cached project folder path
 };
+
+// Helper to get project folder (cached from last transcribe or load)
+function getProjectFolder() {
+  return state.projectFolder || '';
+}
 
 // ---- Provider UI toggles ----
 function updateProviderUI(provider) {
+  document.getElementById('groqAiRow').style.display    = provider === 'groq'      ? 'block' : 'none';
   document.getElementById('claudeKeyRow').style.display = provider === 'anthropic' ? 'flex' : 'none';
   document.getElementById('geminiKeyRow').style.display = provider === 'gemini'    ? 'flex' : 'none';
   document.getElementById('ollamaRow').style.display    = provider === 'ollama'    ? 'block' : 'none';
@@ -130,7 +137,12 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
 // ---- TRANSCRIBE ----
 document.getElementById('btnTranscribe').addEventListener('click', async () => {
   const settings = state.settings;
-  if (!settings.openaiKey) {
+  const txProvider = settings.transcribeProvider || 'groq';
+  if (txProvider === 'groq' && !settings.groqKey) {
+    setStatus('Groq API key missing — open Settings.', 'error');
+    return;
+  }
+  if (txProvider === 'openai' && !settings.openaiKey) {
     setStatus('OpenAI API key missing — open Settings.', 'error');
     return;
   }
@@ -141,51 +153,134 @@ document.getElementById('btnTranscribe').addEventListener('click', async () => {
   try {
     // 1. Tell ExtendScript to export the audio
     const exportResult = await callExtendScript('exportTimelineAudio', {
-      tempFolder: settings.tempFolder || 'C:/Temp',
+      tempFolder: settings.tempFolder || '',
       source: document.getElementById('audioSource').value
     });
 
-    if (!exportResult.success) throw new Error(exportResult.error || 'Audio export failed');
+    if (!exportResult.success) {
+      if (exportResult.needsManualExport) {
+        hideProgress();
+        showManualAudioSection(true);
+        setStatus('Auto-export failed — export MP3 from Premiere manually (see below). Detail: ' + (exportResult.error || ''), 'error');
+        return;
+      }
+      throw new Error(exportResult.error || 'Audio export failed');
+    }
 
-    showProgress(25, 'Sending to Whisper AI for transcription...');
-    setStatus('Transcribing audio (this may take a few minutes for long videos)...', 'working');
+    // AME queued but file not ready yet — poll up to 20s then fall back to manual
+    if (exportResult.pending && exportResult.audioPath) {
+      setStatus('Checking if AME exported the file...', 'working');
+      let found = false;
+      for (let i = 0; i < 20; i++) {
+        await new Promise(r => setTimeout(r, 1000));
+        try {
+          const chk = await fetch(`${SERVER_URL()}/check-file?path=${encodeURIComponent(exportResult.audioPath)}`);
+          const data = await chk.json();
+          if (data.exists) { found = true; break; }
+        } catch(e) {}
+      }
+      if (!found) {
+        hideProgress();
+        showManualAudioSection(true);
+        setStatus('Auto-export not available — export MP3 from Premiere manually (see below)', 'error');
+        return;
+      }
+    }
 
-    // 2. Transcribe via server
+    await runTranscription(exportResult.audioPath, exportResult.sourcePaths, exportResult.useSourceFiles);
+
+  } catch(err) {
+    console.error(err);
+    setStatus('Error: ' + err.message, 'error');
+    hideProgress();
+  }
+});
+
+// ---- Shared transcription + translation function ----
+async function runTranscription(audioPath, sourcePaths, useSourceFiles) {
+  const settings = state.settings;
+  showProgress(25, 'Sending to Whisper AI for transcription...');
+  setStatus('Transcribing audio (this may take a few minutes for long videos)...', 'working');
+
+  try {
+    // Get the Premiere project folder so temp files stay next to the project
+    let projectFolder = '';
+    try {
+      const pf = await callExtendScript('getProjectFolder', {});
+      if (pf && pf.projectFolder) projectFolder = pf.projectFolder;
+      state.projectFolder = projectFolder; // cache for save buttons
+    } catch(e) {}
+
     const lang = document.getElementById('sourceLang').value;
-    const transcribeRes = await fetch(`${SERVER_URL()}/transcribe`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        audioPath:          exportResult.audioPath,
-        language:           lang === 'auto' ? null : lang,
-        transcribeProvider: settings.transcribeProvider || 'groq',
-        groqKey:            settings.groqKey,
-        openaiKey:          settings.openaiKey
-      })
-    });
 
-    if (!transcribeRes.ok) throw new Error(await transcribeRes.text());
-    const transcribeData = await transcribeRes.json();
+    // Start polling for progress updates while transcription runs
+    let progressPoll = setInterval(async () => {
+      try {
+        const pr = await fetch(`${SERVER_URL()}/progress`, { signal: AbortSignal.timeout(2000) });
+        const pg = await pr.json();
+        if (pg.stage === 'transcribing' || pg.stage === 'chunking') {
+          showProgress(pg.percent, pg.detail);
+          setStatus(pg.detail, 'working');
+        }
+      } catch(e) {}
+    }, 2000);
+
+    let transcribeData;
+    try {
+      // 15 minute timeout — large files (72 min / 5 chunks) can take several minutes
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 15 * 60 * 1000);
+
+      const transcribeRes = await fetch(`${SERVER_URL()}/transcribe`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
+        body: JSON.stringify({
+          audioPath,
+          sourcePaths,
+          useSourceFiles,
+          projectFolder,
+          language:           lang === 'auto' ? null : lang,
+          transcribeProvider: settings.transcribeProvider || 'groq',
+          groqKey:            settings.groqKey,
+          openaiKey:          settings.openaiKey
+        })
+      });
+
+      clearTimeout(timeoutId);
+      if (!transcribeRes.ok) throw new Error(await transcribeRes.text());
+      transcribeData = await transcribeRes.json();
+    } finally {
+      clearInterval(progressPoll);
+    }
 
     showProgress(65, 'Translating to English...');
     setStatus('Translating...', 'working');
 
-    // 3. Translate via server
-    const targetLang = document.getElementById('targetLang').value;
+    const targetLangCode = document.getElementById('targetLang').value;
+    const targetLangNames = { en: 'English', fr: 'French', es: 'Spanish', ar: 'Arabic' };
+    const targetLang = targetLangNames[targetLangCode] || targetLangCode;
+    // 15 minute timeout for translation too (37 batches can be slow)
+    const txController = new AbortController();
+    const txTimeoutId = setTimeout(() => txController.abort(), 15 * 60 * 1000);
+
     const translateRes = await fetch(`${SERVER_URL()}/translate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      signal: txController.signal,
       body: JSON.stringify({
         segments:     transcribeData.segments,
         targetLang,
-        provider:     settings.aiProvider || 'anthropic',
+        provider:     settings.aiProvider || 'groq',
         anthropicKey: settings.anthropicKey,
+        groqKey:      settings.groqKey,
         geminiKey:    settings.geminiKey,
         ollamaModel:  settings.ollamaModel,
         ollamaUrl:    settings.ollamaUrl
       })
     });
 
+    clearTimeout(txTimeoutId);
     if (!translateRes.ok) throw new Error(await translateRes.text());
     const translateData = await translateRes.json();
 
@@ -193,12 +288,9 @@ document.getElementById('btnTranscribe').addEventListener('click', async () => {
     state.transcriptData = translateData.segments;
     sessionStorage.setItem('icanLastTranscript', JSON.stringify(state.transcriptData));
 
-    // Render script
     renderScript(state.transcriptData);
     scheduleAutoSave();
     document.getElementById('scriptSection').style.display = 'block';
-
-    // Enable analyze tab
     document.getElementById('analyzeNotice').style.display = 'none';
     document.getElementById('analyzePanel').style.display = 'block';
     document.getElementById('captionsNotice').style.display = 'none';
@@ -212,7 +304,7 @@ document.getElementById('btnTranscribe').addEventListener('click', async () => {
     setStatus('Error: ' + err.message, 'error');
     hideProgress();
   }
-});
+}
 
 // ---- RENDER SCRIPT ----
 function renderScript(segments) {
@@ -310,19 +402,74 @@ function secondsToSrtTime(secs) {
 }
 
 function downloadText(content, filename, mimeType) {
-  const blob = new Blob([content], { type: mimeType });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(a.href);
+  // CEP panels block Blob URLs — save via the server instead
+  fetch(`${SERVER_URL()}/save-file`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content, filename, projectFolder: getProjectFolder() })
+  })
+  .then(r => r.json())
+  .then(data => {
+    if (data.success) {
+      setStatus(`Saved: ${data.path}`, 'success');
+    } else {
+      // Fallback: try Blob URL (works in browser preview)
+      try {
+        const blob = new Blob([content], { type: mimeType });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = filename;
+        a.click();
+        URL.revokeObjectURL(a.href);
+        setStatus(`Exported ${filename}`, 'success');
+      } catch(e2) {
+        setStatus('Save failed: ' + (data.error || e2.message), 'error');
+      }
+    }
+  })
+  .catch(() => {
+    // Fallback: try Blob URL
+    try {
+      const blob = new Blob([content], { type: mimeType });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(a.href);
+      setStatus(`Exported ${filename}`, 'success');
+    } catch(e) {
+      setStatus('Save failed — server offline', 'error');
+    }
+  });
 }
 
 document.getElementById('btnCopyScript').addEventListener('click', () => {
   if (!state.transcriptData) return;
   const lines = state.transcriptData.map(s => `[${formatTime(s.timeSec)}] ${s.english}`).join('\n');
-  navigator.clipboard.writeText(lines).catch(() => {});
-  setStatus('Script copied to clipboard', 'success');
+  // CEP panels may block navigator.clipboard — use fallback methods
+  try {
+    // Method 1: execCommand (works in CEP)
+    const textarea = document.createElement('textarea');
+    textarea.value = lines;
+    textarea.style.position = 'fixed';
+    textarea.style.left = '-9999px';
+    document.body.appendChild(textarea);
+    textarea.select();
+    document.execCommand('copy');
+    document.body.removeChild(textarea);
+    setStatus('Script copied to clipboard ✓', 'success');
+  } catch(e) {
+    // Method 2: navigator.clipboard (works in browser)
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(lines).then(() => {
+        setStatus('Script copied to clipboard ✓', 'success');
+      }).catch(() => {
+        setStatus('Copy failed — try selecting text manually', 'error');
+      });
+    } else {
+      setStatus('Copy not supported in this environment', 'error');
+    }
+  }
 });
 
 // Transcript search
@@ -366,13 +513,26 @@ document.getElementById('reelPlus').addEventListener('click', () => {
 document.getElementById('btnAnalyze').addEventListener('click', async () => {
   if (!state.transcriptData) return;
   const settings = state.settings;
-  if (!settings.anthropicKey) {
+  const aiProv = settings.aiProvider || 'groq';
+
+  // Check the correct provider key — not just anthropicKey
+  if (aiProv === 'groq' && !settings.groqKey) {
+    setStatus('Groq API key missing — open Settings.', 'error');
+    return;
+  }
+  if (aiProv === 'anthropic' && !settings.anthropicKey) {
     setStatus('Claude API key missing — open Settings.', 'error');
     return;
   }
+  if (aiProv === 'gemini' && !settings.geminiKey) {
+    setStatus('Gemini API key missing — open Settings.', 'error');
+    return;
+  }
+  // Ollama needs no key (local)
 
+  const providerName = aiProv === 'groq' ? 'Groq' : aiProv === 'anthropic' ? 'Claude' : aiProv === 'gemini' ? 'Gemini' : 'Ollama';
   setStatus('Running AI analysis...', 'working');
-  showProgress(30, 'Claude is analyzing your script...');
+  showProgress(30, `${providerName} is analyzing your script...`);
 
   try {
     const opts = {
@@ -389,8 +549,9 @@ document.getElementById('btnAnalyze').addEventListener('click', async () => {
       body: JSON.stringify({
         segments:     state.transcriptData,
         options:      opts,
-        provider:     settings.aiProvider || 'anthropic',
+        provider:     settings.aiProvider || 'groq',
         anthropicKey: settings.anthropicKey,
+        groqKey:      settings.groqKey,
         geminiKey:    settings.geminiKey,
         ollamaModel:  settings.ollamaModel,
         ollamaUrl:    settings.ollamaUrl
@@ -490,11 +651,18 @@ function createResultItem(startSec, endSec, text, subtext, hasCheckbox, badge) {
   return item;
 }
 
-// Mark highlights
-document.getElementById('markHighlights').addEventListener('click', () => {
+// Mark highlights with range markers (in/out points)
+document.getElementById('markHighlights').addEventListener('click', async () => {
   if (!state.analysisData?.highlights) return;
-  callExtendScript('addMarkers', { markers: state.analysisData.highlights, color: 'yellow', label: 'Highlight' });
-  setStatus('Highlights marked in timeline', 'success');
+  const items = state.analysisData.highlights.map((h, i) => ({
+    startSec: h.startSec,
+    endSec: h.endSec,
+    name: h.text ? h.text.substring(0, 40) : ('Highlight ' + (i + 1)),
+    reason: h.reason || '',
+    color: 'yellow'
+  }));
+  const result = await callExtendScript('addRangeMarkers', { items });
+  setStatus(result.success ? `${result.count} highlights marked with in/out points` : 'Error: ' + result.error, result.success ? 'success' : 'error');
 });
 
 // Select all fillers
@@ -605,61 +773,7 @@ document.getElementById('btnAddCaptions').addEventListener('click', async () => 
   setStatus(result.success ? 'Captions added!' : 'Caption error: ' + result.error, result.success ? 'success' : 'error');
 });
 
-// ---- AUDIO CHAIN ----
-document.getElementById('btnAddPlugin').addEventListener('click', () => {
-  const chain = document.getElementById('pluginChainDialogue');
-  const count = chain.querySelectorAll('.plugin-slot').length;
-  const slot = document.createElement('div');
-  slot.className = 'plugin-slot';
-  slot.dataset.index = count;
-  slot.innerHTML = `
-    <span class="plugin-slot-num">${count + 1}</span>
-    <input type="text" class="plugin-name-input" placeholder="Enter plugin name..." />
-    <button class="btn btn-xs danger remove-plugin">✕</button>`;
-  chain.appendChild(slot);
-  bindRemovePlugin(slot.querySelector('.remove-plugin'));
-});
-
-function bindRemovePlugin(btn) {
-  btn.addEventListener('click', () => {
-    btn.closest('.plugin-slot').remove();
-    renumberPlugins();
-  });
-}
-
-function renumberPlugins() {
-  document.querySelectorAll('#pluginChainDialogue .plugin-slot').forEach((slot, i) => {
-    slot.querySelector('.plugin-slot-num').textContent = i + 1;
-  });
-}
-
-document.querySelectorAll('.remove-plugin').forEach(btn => bindRemovePlugin(btn));
-
-document.getElementById('btnSaveAudioPreset').addEventListener('click', () => {
-  const plugins = [];
-  document.querySelectorAll('.plugin-name-input').forEach(input => {
-    if (input.value.trim()) plugins.push(input.value.trim());
-  });
-  state.settings.audioChain = plugins;
-  localStorage.setItem('icanSettings', JSON.stringify(state.settings));
-  setStatus('Audio chain saved', 'success');
-});
-
-document.getElementById('btnApplyAudio').addEventListener('click', async () => {
-  const plugins = [];
-  document.querySelectorAll('.plugin-name-input').forEach(input => {
-    if (input.value.trim()) plugins.push(input.value.trim());
-  });
-
-  const trackTypes = [];
-  if (document.getElementById('applyDialogueTracks').checked) trackTypes.push('dialogue');
-  if (document.getElementById('applyMusicTracks').checked) trackTypes.push('music');
-  if (document.getElementById('applySfxTracks').checked) trackTypes.push('sfx');
-
-  setStatus('Applying audio plugin chain...', 'working');
-  const result = await callExtendScript('applyAudioChain', { plugins, trackTypes });
-  setStatus(result.success ? 'Audio chain applied!' : 'Error: ' + result.error, result.success ? 'success' : 'error');
-});
+// ---- OLD AUDIO CHAIN removed — replaced by Track Mixer system below ----
 
 // ---- SETTINGS MODAL ----
 document.getElementById('btnSettings').addEventListener('click', () => {
@@ -674,6 +788,173 @@ document.getElementById('settingsModal').addEventListener('click', (e) => {
 document.getElementById('browseTempFolder').addEventListener('click', async () => {
   const result = await callExtendScript('browseForFolder', {});
   if (result.path) document.getElementById('tempFolder').value = result.path;
+});
+
+// ---- MANUAL AUDIO IMPORT ----
+function showManualAudioSection() {
+  // Section is always visible — nothing to toggle
+}
+
+
+document.getElementById('btnBrowseAudio').addEventListener('click', async () => {
+  const result = await callExtendScript('browseForFile', { filter: 'Audio Files:*.mp3;*.wav;*.aac;*.m4a;*.flac' });
+  if (result && result.path) document.getElementById('manualAudioPath').value = result.path;
+});
+
+document.getElementById('btnTranscribeManual').addEventListener('click', async () => {
+  const audioPath = document.getElementById('manualAudioPath').value.trim();
+  if (!audioPath) { setStatus('Please select an audio file first.', 'error'); return; }
+  const settings = state.settings;
+  const txProvider = settings.transcribeProvider || 'groq';
+  if (txProvider === 'groq' && !settings.groqKey) { setStatus('Groq API key missing — open Settings.', 'error'); return; }
+  if (txProvider === 'openai' && !settings.openaiKey) { setStatus('OpenAI API key missing — open Settings.', 'error'); return; }
+  await runTranscription(audioPath, null, false);
+});
+
+// ---- Import from Premiere Pro Transcript ----
+document.getElementById('btnImportPPTranscript').addEventListener('click', async () => {
+  setStatus('Importing Premiere Pro transcript...', 'working');
+  const result = await callExtendScript('importPPTranscript', {});
+  if (result.success && result.segments && result.segments.length > 0) {
+    state.transcriptData = result.segments;
+    renderScript(state.transcriptData);
+    document.getElementById('scriptSection').style.display = 'block';
+    document.getElementById('analyzeNotice').style.display = 'none';
+    document.getElementById('analyzePanel').style.display = 'block';
+    document.getElementById('captionsNotice').style.display = 'none';
+    document.getElementById('captionsPanel').style.display = 'block';
+    setStatus(`Imported ${result.count} segments from Premiere Pro`, 'success');
+  } else if (result.count === 0) {
+    setStatus('No transcript found in Premiere Pro. Use Text > Transcribe Sequence first.', 'error');
+  } else {
+    setStatus('Import error: ' + (result.error || 'unknown'), 'error');
+  }
+});
+
+// ---- AUDIO TAB: Track Mixer ----
+let audioTrackState = []; // [{index, name, plugins: ['name1', 'name2']}]
+
+document.getElementById('btnLoadTracks').addEventListener('click', async () => {
+  setStatus('Loading audio tracks...', 'working');
+  const result = await callExtendScript('getAudioTrackInfo', {});
+  if (!result.success) { setStatus('Error: ' + result.error, 'error'); return; }
+
+  audioTrackState = result.tracks.map(t => ({
+    index: t.index,
+    name: t.name,
+    plugins: []
+  }));
+
+  // Load saved presets for these tracks
+  const savedPreset = state.settings.audioTrackPresets || {};
+  audioTrackState.forEach(t => {
+    if (savedPreset[t.name]) t.plugins = [...savedPreset[t.name]];
+  });
+
+  renderTrackMixer();
+  updateTrackTargetSelect();
+  setStatus(`Loaded ${result.tracks.length} audio tracks`, 'success');
+});
+
+function renderTrackMixer() {
+  const container = document.getElementById('trackMixerContainer');
+  container.innerHTML = '';
+
+  audioTrackState.forEach((track, ti) => {
+    const row = document.createElement('div');
+    row.className = 'track-mixer-row';
+
+    const header = document.createElement('div');
+    header.className = 'track-mixer-header';
+    header.innerHTML = `
+      <span class="track-mixer-name">${track.name}</span>
+      <span class="track-mixer-badge">${track.plugins.length} plugins</span>
+    `;
+    row.appendChild(header);
+
+    const pluginsDiv = document.createElement('div');
+    pluginsDiv.className = 'track-mixer-plugins';
+
+    track.plugins.forEach((pluginName, pi) => {
+      const slot = document.createElement('div');
+      slot.className = 'track-plugin-slot';
+      slot.innerHTML = `
+        <span class="plugin-slot-num">${pi + 1}</span>
+        <input type="text" value="${pluginName}" data-track="${ti}" data-plugin="${pi}" />
+        <button class="btn btn-xs danger" data-track="${ti}" data-plugin="${pi}">✕</button>
+      `;
+      // Edit plugin name inline
+      slot.querySelector('input').addEventListener('change', function() {
+        audioTrackState[+this.dataset.track].plugins[+this.dataset.plugin] = this.value;
+      });
+      // Remove plugin
+      slot.querySelector('button').addEventListener('click', function() {
+        audioTrackState[+this.dataset.track].plugins.splice(+this.dataset.plugin, 1);
+        renderTrackMixer();
+      });
+      pluginsDiv.appendChild(slot);
+    });
+
+    if (track.plugins.length === 0) {
+      pluginsDiv.innerHTML = '<div style="text-align:center;color:var(--text-muted);padding:6px;font-size:10px">No plugins — use Quick Add below</div>';
+    }
+
+    row.appendChild(pluginsDiv);
+    container.appendChild(row);
+  });
+}
+
+function updateTrackTargetSelect() {
+  const sel = document.getElementById('pluginTargetTrack');
+  sel.innerHTML = '<option value="all">All Tracks</option>';
+  audioTrackState.forEach((t, i) => {
+    sel.innerHTML += `<option value="${i}">${t.name}</option>`;
+  });
+}
+
+document.getElementById('btnAddPluginToTrack').addEventListener('click', () => {
+  const pluginName = document.getElementById('pluginSearch').value.trim();
+  if (!pluginName) { setStatus('Enter a plugin name first', 'error'); return; }
+  const target = document.getElementById('pluginTargetTrack').value;
+
+  if (target === 'all') {
+    audioTrackState.forEach(t => t.plugins.push(pluginName));
+  } else {
+    audioTrackState[+target].plugins.push(pluginName);
+  }
+  document.getElementById('pluginSearch').value = '';
+  renderTrackMixer();
+  setStatus(`Added "${pluginName}"`, 'success');
+});
+
+// Save audio preset
+document.getElementById('btnSaveAudioPreset').addEventListener('click', () => {
+  const presets = {};
+  audioTrackState.forEach(t => { presets[t.name] = t.plugins; });
+  state.settings.audioTrackPresets = presets;
+  localStorage.setItem('icanSettings', JSON.stringify(state.settings));
+  setStatus('Audio preset saved', 'success');
+});
+
+// Apply to track mixer in Premiere
+document.getElementById('btnApplyAudio').addEventListener('click', async () => {
+  if (!audioTrackState.length) { setStatus('Load tracks first', 'error'); return; }
+  setStatus('Applying plugins to track mixer...', 'working');
+
+  const assignments = audioTrackState
+    .filter(t => t.index >= 0 && t.plugins.length > 0)
+    .map(t => ({ trackIndex: t.index, plugins: t.plugins }));
+
+  if (!assignments.length) { setStatus('No plugins to apply', 'error'); return; }
+
+  const result = await callExtendScript('applyTrackMixerPlugins', { assignments });
+  if (result.success) {
+    let msg = `Applied ${result.applied} plugins to track mixer`;
+    if (result.errors) msg += ` (warnings: ${result.errors})`;
+    setStatus(msg, 'success');
+  } else {
+    setStatus('Error: ' + result.error, 'error');
+  }
 });
 
 function closeModal(id) {
@@ -749,6 +1030,10 @@ document.getElementById('brandSelect').addEventListener('change', function() {
   updateBrandingUI();
   applyBrandTheme(brand);
 
+  // Sync branding tab preset selector
+  const bp = document.getElementById('brandingPreset');
+  if (bp) bp.value = brand;
+
   localStorage.setItem('icanSettings', JSON.stringify(state.settings));
   setStatus(`Switched to ${BRANDS[brand]?.name || brand}`, 'success');
 });
@@ -774,11 +1059,19 @@ function scheduleAutoSave() {
 async function doAutoSave() {
   if (!state.transcriptData || !state.transcriptData.length) return;
   try {
+    // Get project folder so transcripts save next to the project
+    let projectFolder = '';
+    try {
+      const pf = await callExtendScript('getProjectFolder', {});
+      if (pf && pf.projectFolder) projectFolder = pf.projectFolder;
+      state.projectFolder = projectFolder; // cache for save buttons
+    } catch(e) {}
+
     const projectName = (state.settings.activeBrand || 'ican') + '_transcript';
     await fetch(`${SERVER_URL()}/save-transcript`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ transcript: state.transcriptData, projectName })
+      body: JSON.stringify({ transcript: state.transcriptData, projectName, projectFolder })
     });
     // Save to sessionStorage as a fast restore fallback
     sessionStorage.setItem('icanLastTranscript', JSON.stringify(state.transcriptData));
@@ -891,9 +1184,10 @@ function updateApiStatusDots() {
   const transcribeLabel  = transcribeProvider === 'groq' ? 'Groq' : 'Whisper';
 
   // AI provider key
-  const aiProvider = s.aiProvider || 'anthropic';
+  const aiProvider = s.aiProvider || 'groq';
   let hasAiKey = false;
-  let aiLabel  = 'Claude';
+  let aiLabel  = 'Groq';
+  if (aiProvider === 'groq')      { hasAiKey = !!(s.groqKey);      aiLabel = 'Groq'; }
   if (aiProvider === 'anthropic') { hasAiKey = !!(s.anthropicKey); aiLabel = 'Claude'; }
   if (aiProvider === 'gemini')    { hasAiKey = !!(s.geminiKey);    aiLabel = 'Gemini'; }
   if (aiProvider === 'ollama')    { hasAiKey = true;               aiLabel = 'Ollama'; }
@@ -944,43 +1238,77 @@ document.getElementById('importSettingsFile').addEventListener('change', functio
 });
 
 // ---- Auto-Start Server ----
-// When the panel opens, automatically starts the Node.js server if it isn't running.
-// Uses CEP's built-in Node.js (available via require in CEP renderer context).
+// Starts node server.js directly from the extension folder.
+// The server itself handles EADDRINUSE (kills old process and retries).
+// Uses CEP's built-in Node.js (--enable-nodejs in manifest).
 async function ensureServerRunning() {
-  // 1. Check if already running
+  // 1. Already running? Do nothing.
   try {
-    await fetch(`${SERVER_URL()}/ping`);
-    return true;
+    const r = await fetch(`${SERVER_URL()}/ping`, { signal: AbortSignal.timeout(2000) });
+    if (r.ok) return true;
   } catch {}
 
-  // 2. Not running — try to spawn it automatically
-  setStatus('Starting server...', 'working');
+  setStatus('Starting AI server...', 'working');
+
   try {
-    const csi = new CSInterface();
-    const extPath = csi.getSystemPath(SystemPath.EXTENSION).replace(/\\/g, '/');
-    const serverScript = extPath + '/server/server.js';
+    const csi       = new CSInterface();
+    const extPath   = csi.getSystemPath(SystemPath.EXTENSION);
+    const serverDir = extPath.replace(/\//g, '\\') + '\\server';
 
-    // CEP exposes Node.js require in the HTML panel context
     const nodeRequire = window.require || (typeof require !== 'undefined' ? require : null);
-    if (!nodeRequire) throw new Error('Node.js not available in this context');
+    if (!nodeRequire) throw new Error('Node.js unavailable in CEP context');
 
-    const { spawn } = nodeRequire('child_process');
-    spawn('node', [serverScript], {
-      detached: true,
-      stdio:    'ignore',
-      windowsHide: true
-    }).unref();
+    const { spawn, execSync } = nodeRequire('child_process');
+    const fs        = nodeRequire('fs');
 
-    // Poll every second for up to 20 seconds
-    for (let i = 0; i < 20; i++) {
-      await new Promise(r => setTimeout(r, 1000));
+    if (!fs.existsSync(serverDir + '\\server.js')) {
+      throw new Error('server.js not found at: ' + serverDir);
+    }
+
+    // Find node.exe path
+    let nodePath = 'node';
+    try {
+      nodePath = execSync('where node', { encoding: 'utf8' }).trim().split('\n')[0].trim();
+    } catch(e) {}
+
+    // Ensure node_modules exist (run npm install if missing)
+    if (!fs.existsSync(serverDir + '\\node_modules')) {
+      console.log('[AutoStart] node_modules missing — running npm install...');
+      setStatus('Installing server dependencies...', 'working');
       try {
-        await fetch(`${SERVER_URL()}/ping`);
-        return true; // server is up
+        execSync('npm install --production', { cwd: serverDir, encoding: 'utf8', timeout: 120000 });
+        console.log('[AutoStart] npm install complete');
+      } catch(npmErr) {
+        console.error('[AutoStart] npm install failed:', npmErr.message);
+        throw new Error('npm install failed — open a terminal in ' + serverDir + ' and run: npm install');
+      }
+    }
+
+    console.log('[AutoStart] Server dir:', serverDir);
+    console.log('[AutoStart] Node path:', nodePath);
+
+    // Use cmd.exe /c start to create a truly independent visible console window
+    // This works reliably from CEP context where spawn+detached often fails
+    const child = spawn('cmd.exe', ['/c', 'start', '"ICAN Server"', '/D', serverDir, nodePath, 'server.js'], {
+      cwd:         serverDir,
+      detached:    true,
+      stdio:       'ignore',
+      windowsHide: false,
+      shell:       false
+    });
+    child.unref();
+
+    // Poll every second for up to 30 seconds
+    for (let i = 0; i < 30; i++) {
+      await new Promise(r => setTimeout(r, 1000));
+      setStatus(`Starting AI server... (${i + 1}s)`, 'working');
+      try {
+        const r = await fetch(`${SERVER_URL()}/ping`, { signal: AbortSignal.timeout(2000) });
+        if (r.ok) return true;
       } catch {}
     }
-  } catch(e) {
-    console.log('[AutoStart]', e.message);
+  } catch (e) {
+    console.error('[AutoStart]', e.message);
   }
 
   return false;
@@ -991,7 +1319,7 @@ window.addEventListener('load', async () => {
   loadSettings();
   updateApiStatusDots();
   checkForRestoreableTranscript();
-  setStatus('Starting...', 'working');
+  setStatus('Starting server...', 'working');
 
   const serverOk = await ensureServerRunning();
 
@@ -1005,6 +1333,19 @@ window.addEventListener('load', async () => {
     setStatus('Ready', 'idle');
     checkForUpdates(); // background update check
   } else {
-    setStatus('⚠️ Server offline — double-click "START ICAN EDITOR.bat"', 'error');
+    setStatus('⚠️ Server offline — click ⚙️ Settings → check port, or restart Premiere Pro', 'error');
   }
+});
+
+// ---- Shutdown server when panel closes (Premiere Pro exit) ----
+window.addEventListener('unload', () => {
+  try {
+    // Use sendBeacon for reliable delivery during page unload
+    const url = `${SERVER_URL()}/stop`;
+    if (navigator.sendBeacon) {
+      navigator.sendBeacon(url, '{}');
+    } else {
+      fetch(url, { method: 'POST', keepalive: true, headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    }
+  } catch(e) {}
 });

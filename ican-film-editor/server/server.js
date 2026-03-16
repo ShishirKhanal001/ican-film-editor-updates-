@@ -49,18 +49,41 @@ app.get('/check-update', async (req, res) => {
   }
 });
 
+// ---- Check if a file exists (used to poll for AME export completion) ----
+app.get('/check-file', (req, res) => {
+  const filePath = req.query.path;
+  if (!filePath) return res.json({ exists: false });
+  res.json({ exists: fs.existsSync(filePath) });
+});
+
+// ---- Resolve save directory: project folder > Documents fallback ----
+function getTranscriptDir(projectFolder) {
+  // Prefer saving inside the project folder
+  if (projectFolder) {
+    const projDir = path.join(projectFolder, 'ICAN Temp', 'Transcripts');
+    try {
+      if (!fs.existsSync(projDir)) fs.mkdirSync(projDir, { recursive: true });
+      return projDir;
+    } catch(e) {}
+  }
+  // Fallback to Documents
+  const docDir = path.join(os.homedir(), 'Documents', 'ICAN Film Editor', 'Transcripts');
+  if (!fs.existsSync(docDir)) fs.mkdirSync(docDir, { recursive: true });
+  return docDir;
+}
+
 // ---- Save transcript to disk (auto-backup) ----
 app.post('/save-transcript', (req, res) => {
   try {
-    const { transcript, projectName } = req.body;
-    const saveDir  = path.join(os.homedir(), 'Documents', 'ICAN Film Editor', 'Transcripts');
-    if (!fs.existsSync(saveDir)) fs.mkdirSync(saveDir, { recursive: true });
+    const { transcript, projectName, projectFolder } = req.body;
+    const saveDir = getTranscriptDir(projectFolder);
 
     const safeName = (projectName || 'transcript').replace(/[^a-zA-Z0-9_\-]/g, '_');
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
     const filePath  = path.join(saveDir, `${safeName}_${timestamp}.json`);
 
     fs.writeFileSync(filePath, JSON.stringify(transcript, null, 2), 'utf8');
+    console.log(`[AutoSave] Saved to: ${filePath}`);
     res.json({ success: true, path: filePath });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -70,7 +93,8 @@ app.post('/save-transcript', (req, res) => {
 // ---- Load saved transcripts ----
 app.get('/list-transcripts', (req, res) => {
   try {
-    const saveDir = path.join(os.homedir(), 'Documents', 'ICAN Film Editor', 'Transcripts');
+    const projectFolder = req.query.projectFolder;
+    const saveDir = getTranscriptDir(projectFolder);
     if (!fs.existsSync(saveDir)) return res.json({ files: [] });
     const files = fs.readdirSync(saveDir)
       .filter(f => f.endsWith('.json'))
@@ -85,13 +109,46 @@ app.get('/list-transcripts', (req, res) => {
 
 app.get('/load-transcript/:filename', (req, res) => {
   try {
-    const saveDir  = path.join(os.homedir(), 'Documents', 'ICAN Film Editor', 'Transcripts');
+    const projectFolder = req.query.projectFolder;
+    const saveDir = getTranscriptDir(projectFolder);
     const filePath = path.join(saveDir, path.basename(req.params.filename));
     if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'File not found' });
     res.json(JSON.parse(fs.readFileSync(filePath, 'utf8')));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// ---- Save file to disk (for TXT/SRT export — CEP blocks Blob URLs) ----
+app.post('/save-file', (req, res) => {
+  try {
+    const { content, filename, projectFolder } = req.body;
+    if (!content || !filename) return res.status(400).json({ error: 'Missing content or filename' });
+
+    // Save next to the project in "ICAN Exports", or fallback to Documents
+    let saveDir;
+    if (projectFolder) {
+      saveDir = path.join(projectFolder, 'ICAN Exports');
+    } else {
+      saveDir = path.join(os.homedir(), 'Documents', 'ICAN Film Editor', 'Exports');
+    }
+    if (!fs.existsSync(saveDir)) fs.mkdirSync(saveDir, { recursive: true });
+
+    const safeName = filename.replace(/[^a-zA-Z0-9_\-\.]/g, '_');
+    const filePath = path.join(saveDir, safeName);
+    fs.writeFileSync(filePath, content, 'utf8');
+    console.log(`[Export] Saved: ${filePath}`);
+    res.json({ success: true, path: filePath });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---- Stop server (called when Premiere closes the panel) ----
+app.post('/stop', (req, res) => {
+  res.json({ success: true, message: 'Server shutting down...' });
+  console.log('\n  [Server] Shutdown requested by panel. Goodbye!\n');
+  setTimeout(() => process.exit(0), 500);
 });
 
 // ---- Apply update in-plugin ----
@@ -114,6 +171,12 @@ app.post('/apply-update', async (req, res) => {
   }
 });
 
+// ---- Progress tracking (shared state for long operations) ----
+global.icanProgress = { stage: '', detail: '', percent: 0 };
+app.get('/progress', (req, res) => {
+  res.json(global.icanProgress);
+});
+
 // ---- Routes ----
 app.use('/transcribe', transcribeRoute);
 app.use('/translate',  translateRoute);
@@ -126,8 +189,20 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: err.message });
 });
 
+// ---- Kill existing process on same port (handles EADDRINUSE) ----
+async function killExistingServer() {
+  return new Promise((resolve) => {
+    const { exec } = require('child_process');
+    // Find and kill any process on our port
+    exec(`for /f "tokens=5" %a in ('netstat -aon 2^>nul ^| findstr ":${PORT} "') do taskkill /F /PID %a`, { shell: 'cmd.exe' }, () => {
+      // Wait a moment for port to be released
+      setTimeout(resolve, 1000);
+    });
+  });
+}
+
 // ---- Start ----
-app.listen(PORT, '127.0.0.1', async () => {
+const server = app.listen(PORT, '127.0.0.1', async () => {
   const ver = getLocalVersion();
   console.log('');
   console.log('  ██╗ ██████╗ █████╗ ███╗   ██╗');
@@ -146,4 +221,22 @@ app.listen(PORT, '127.0.0.1', async () => {
   // Background update check
   const info = await checkForUpdates(ver.updateUrl);
   _cachedUpdateInfo = info;
+});
+
+// Handle port already in use — kill old process and retry ONCE
+server.on('error', async (err) => {
+  if (err.code === 'EADDRINUSE') {
+    console.log(`\n  Port ${PORT} is busy — killing old server and retrying...`);
+    await killExistingServer();
+    app.listen(PORT, '127.0.0.1', async () => {
+      const ver = getLocalVersion();
+      console.log(`\n  ICAN Film Editor v${ver.version} — Port ${PORT} (recovered)`);
+      console.log(`  http://localhost:${PORT}/ping\n`);
+      const info = await checkForUpdates(ver.updateUrl);
+      _cachedUpdateInfo = info;
+    });
+  } else {
+    console.error('  Server error:', err.message);
+    process.exit(1);
+  }
 });

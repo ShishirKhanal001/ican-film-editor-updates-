@@ -1,6 +1,6 @@
 {
   "name": "ican-film-editor-server",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "ICAN Film Editor — Local AI Server",
   "main": "server.js",
   "scripts": {

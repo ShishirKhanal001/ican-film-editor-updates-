@@ -86,7 +86,8 @@ if (-not $nodeVersion) {
 # ---- STEP 2: Install FFmpeg ----
 Write-Step "2/5" "Checking FFmpeg"
 
-if (-not (Test-Path $FFMPEG_BIN)) {
+$FFPROBE_BIN = "$SERVER_DIR\bin\ffprobe.exe"
+if (-not (Test-Path $FFMPEG_BIN) -or -not (Test-Path $FFPROBE_BIN)) {
     Write-Warn "FFmpeg not found. Downloading now..."
     $ffmpegZip = "$env:TEMP\ffmpeg.zip"
     $ffmpegUrl = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
@@ -99,11 +100,15 @@ if (-not (Test-Path $FFMPEG_BIN)) {
         if (Test-Path $extractPath) { Remove-Item $extractPath -Recurse -Force }
         Expand-Archive -Path $ffmpegZip -DestinationPath $extractPath -Force
 
-        $ffmpegExe = Get-ChildItem -Path $extractPath -Filter "ffmpeg.exe" -Recurse | Select-Object -First 1
+        $ffmpegExe  = Get-ChildItem -Path $extractPath -Filter "ffmpeg.exe"  -Recurse | Select-Object -First 1
+        $ffprobeExe = Get-ChildItem -Path $extractPath -Filter "ffprobe.exe" -Recurse | Select-Object -First 1
         if ($ffmpegExe) {
             $binDir = "$SERVER_DIR\bin"
             if (-not (Test-Path $binDir)) { New-Item -ItemType Directory -Path $binDir -Force | Out-Null }
             Copy-Item $ffmpegExe.FullName -Destination $FFMPEG_BIN -Force
+            if ($ffprobeExe) {
+                Copy-Item $ffprobeExe.FullName -Destination "$binDir\ffprobe.exe" -Force
+            }
             Write-OK "FFmpeg installed successfully"
         } else {
             throw "ffmpeg.exe not found in archive"

@@ -8,11 +8,16 @@ const path   = require('path');
 const fs     = require('fs');
 const os     = require('os');
 
+const ffmpegBin  = path.join(__dirname, '..', 'bin', 'ffmpeg.exe');
+const ffprobeBin = path.join(__dirname, '..', 'bin', 'ffprobe.exe');
+if (fs.existsSync(ffmpegBin))  ffmpeg.setFfmpegPath(ffmpegBin);
+if (fs.existsSync(ffprobeBin)) ffmpeg.setFfprobePath(ffprobeBin);
+
 /**
  * Splits an audio file into chunks under maxMB size.
  * Returns array of { path, durationSec }
  */
-async function splitAudioIntoChunks(audioPath, maxMB = 24) {
+async function splitAudioIntoChunks(audioPath, maxMB = 24, workDir = null) {
   const stats  = fs.statSync(audioPath);
   const sizeMB = stats.size / (1024 * 1024);
   const totalDurationSec = await getAudioDuration(audioPath);
@@ -27,7 +32,7 @@ async function splitAudioIntoChunks(audioPath, maxMB = 24) {
   console.log(`[Chunker] ${sizeMB.toFixed(1)}MB, ${(totalDurationSec/60).toFixed(1)}min → ${numChunks} chunks of ~${(chunkSec/60).toFixed(1)}min each`);
 
   const chunks = [];
-  const tmpDir = os.tmpdir();
+  const tmpDir = workDir || os.tmpdir();
 
   for (let i = 0; i < numChunks; i++) {
     const startSec = i * chunkSec;
