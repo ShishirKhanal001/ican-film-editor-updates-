@@ -167,12 +167,13 @@ document.getElementById('btnTranscribe').addEventListener('click', async () => {
       throw new Error(exportResult.error || 'Audio export failed');
     }
 
-    // AME queued but file not ready yet — poll up to 20s then fall back to manual
+    // AME queued but file not ready yet — poll up to 60s with progress
     if (exportResult.pending && exportResult.audioPath) {
-      setStatus('Checking if AME exported the file...', 'working');
+      setStatus('Waiting for Premiere to export audio (this can take a few minutes)...', 'working');
       let found = false;
-      for (let i = 0; i < 20; i++) {
+      for (let i = 0; i < 60; i++) {
         await new Promise(r => setTimeout(r, 1000));
+        showProgress(5 + Math.min(20, i), `Exporting audio... (${i + 1}s)`);
         try {
           const chk = await fetch(`${SERVER_URL()}/check-file?path=${encodeURIComponent(exportResult.audioPath)}`);
           const data = await chk.json();
@@ -182,7 +183,7 @@ document.getElementById('btnTranscribe').addEventListener('click', async () => {
       if (!found) {
         hideProgress();
         showManualAudioSection(true);
-        setStatus('Auto-export not available — export MP3 from Premiere manually (see below)', 'error');
+        setStatus('Auto-export timed out — export MP3 from Premiere manually (File > Export > Media > MP3)', 'error');
         return;
       }
     }
@@ -197,10 +198,26 @@ document.getElementById('btnTranscribe').addEventListener('click', async () => {
 });
 
 // ---- Shared transcription + translation function ----
+let _transcribeAbort = null; // AbortController for cancel
+
+function showCancelTranscribe(show) {
+  document.getElementById('btnCancelTranscribe').style.display = show ? 'block' : 'none';
+  document.getElementById('btnTranscribe').style.display = show ? 'none' : 'block';
+}
+
+document.getElementById('btnCancelTranscribe').addEventListener('click', () => {
+  if (_transcribeAbort) { _transcribeAbort.abort(); _transcribeAbort = null; }
+  showCancelTranscribe(false);
+  setStatus('Transcription cancelled.', 'idle');
+  hideProgress();
+});
+
 async function runTranscription(audioPath, sourcePaths, useSourceFiles) {
   const settings = state.settings;
   showProgress(25, 'Sending to Whisper AI for transcription...');
   setStatus('Transcribing audio (this may take a few minutes for long videos)...', 'working');
+  _transcribeAbort = new AbortController();
+  showCancelTranscribe(true);
 
   try {
     // Get the Premiere project folder so temp files stay next to the project
@@ -227,14 +244,10 @@ async function runTranscription(audioPath, sourcePaths, useSourceFiles) {
 
     let transcribeData;
     try {
-      // 15 minute timeout — large files (72 min / 5 chunks) can take several minutes
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 15 * 60 * 1000);
-
       const transcribeRes = await fetch(`${SERVER_URL()}/transcribe`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        signal: controller.signal,
+        signal: _transcribeAbort.signal,
         body: JSON.stringify({
           audioPath,
           sourcePaths,
@@ -247,7 +260,6 @@ async function runTranscription(audioPath, sourcePaths, useSourceFiles) {
         })
       });
 
-      clearTimeout(timeoutId);
       if (!transcribeRes.ok) throw new Error(await transcribeRes.text());
       transcribeData = await transcribeRes.json();
     } finally {
@@ -260,14 +272,11 @@ async function runTranscription(audioPath, sourcePaths, useSourceFiles) {
     const targetLangCode = document.getElementById('targetLang').value;
     const targetLangNames = { en: 'English', fr: 'French', es: 'Spanish', ar: 'Arabic' };
     const targetLang = targetLangNames[targetLangCode] || targetLangCode;
-    // 15 minute timeout for translation too (37 batches can be slow)
-    const txController = new AbortController();
-    const txTimeoutId = setTimeout(() => txController.abort(), 15 * 60 * 1000);
 
     const translateRes = await fetch(`${SERVER_URL()}/translate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      signal: txController.signal,
+      signal: _transcribeAbort.signal,
       body: JSON.stringify({
         segments:     transcribeData.segments,
         targetLang,
@@ -280,7 +289,6 @@ async function runTranscription(audioPath, sourcePaths, useSourceFiles) {
       })
     });
 
-    clearTimeout(txTimeoutId);
     if (!translateRes.ok) throw new Error(await translateRes.text());
     const translateData = await translateRes.json();
 
@@ -301,9 +309,16 @@ async function runTranscription(audioPath, sourcePaths, useSourceFiles) {
     hideProgress();
 
   } catch(err) {
-    console.error(err);
-    setStatus('Error: ' + err.message, 'error');
+    if (err.name === 'AbortError') {
+      setStatus('Transcription cancelled.', 'idle');
+    } else {
+      console.error(err);
+      setStatus('Error: ' + err.message, 'error');
+    }
     hideProgress();
+  } finally {
+    _transcribeAbort = null;
+    showCancelTranscribe(false);
   }
 }
 
@@ -517,12 +532,25 @@ document.getElementById('reelPlus').addEventListener('click', () => {
   document.getElementById('reelCount').textContent = reelCount === 'auto' ? 'Auto' : reelCount;
 });
 
+let _analyzeAbort = null;
+
+function showCancelAnalyze(show) {
+  document.getElementById('btnCancelAnalyze').style.display = show ? 'block' : 'none';
+  document.getElementById('btnAnalyze').style.display = show ? 'none' : 'block';
+}
+
+document.getElementById('btnCancelAnalyze').addEventListener('click', () => {
+  if (_analyzeAbort) { _analyzeAbort.abort(); _analyzeAbort = null; }
+  showCancelAnalyze(false);
+  setStatus('Analysis cancelled.', 'idle');
+  hideProgress();
+});
+
 document.getElementById('btnAnalyze').addEventListener('click', async () => {
   if (!state.transcriptData) return;
   const settings = state.settings;
   const aiProv = settings.aiProvider || 'groq';
 
-  // Check the correct provider key — not just anthropicKey
   if (aiProv === 'groq' && !settings.groqKey) {
     setStatus('Groq API key missing — open Settings.', 'error');
     return;
@@ -535,11 +563,22 @@ document.getElementById('btnAnalyze').addEventListener('click', async () => {
     setStatus('Gemini API key missing — open Settings.', 'error');
     return;
   }
-  // Ollama needs no key (local)
+
+  // Short video guard — warn if video is too short for reels
+  const totalDuration = state.transcriptData.length > 0
+    ? (state.transcriptData[state.transcriptData.length - 1].endSec || state.transcriptData[state.transcriptData.length - 1].timeSec)
+    : 0;
+  const wantsReels = document.getElementById('optReels').checked;
+  if (wantsReels && totalDuration < 60) {
+    setStatus('Video is under 60 seconds — reels need at least 60s. Reels disabled for this analysis.', 'error');
+    document.getElementById('optReels').checked = false;
+  }
 
   const providerName = aiProv === 'groq' ? 'Groq' : aiProv === 'anthropic' ? 'Claude' : aiProv === 'gemini' ? 'Gemini' : 'Ollama';
   setStatus('Running AI analysis...', 'working');
   showProgress(30, `${providerName} is analyzing your script...`);
+  _analyzeAbort = new AbortController();
+  showCancelAnalyze(true);
 
   try {
     const opts = {
@@ -555,6 +594,7 @@ document.getElementById('btnAnalyze').addEventListener('click', async () => {
     const res = await fetch(`${SERVER_URL()}/analyze`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      signal: _analyzeAbort.signal,
       body: JSON.stringify({
         segments:     state.transcriptData,
         options:      opts,
@@ -571,6 +611,11 @@ document.getElementById('btnAnalyze').addEventListener('click', async () => {
     const data = await res.json();
     state.analysisData = data;
 
+    // Check if reels were adjusted and warn
+    if (data.reels && data._reelWarnings && data._reelWarnings.length) {
+      console.log('[Analyze] Reel adjustments:', data._reelWarnings);
+    }
+
     showProgress(100, 'Analysis complete');
     renderAnalysisResults(data, opts);
     document.getElementById('analysisResults').style.display = 'block';
@@ -578,8 +623,15 @@ document.getElementById('btnAnalyze').addEventListener('click', async () => {
     hideProgress();
 
   } catch(err) {
-    setStatus('Analysis error: ' + err.message, 'error');
+    if (err.name === 'AbortError') {
+      setStatus('Analysis cancelled.', 'idle');
+    } else {
+      setStatus('Analysis error: ' + err.message, 'error');
+    }
     hideProgress();
+  } finally {
+    _analyzeAbort = null;
+    showCancelAnalyze(false);
   }
 });
 
@@ -645,11 +697,17 @@ function renderAnalysisResults(data, opts) {
     document.getElementById('reelsBlock').style.display = 'block';
     const list = document.getElementById('reelsList');
     list.innerHTML = '';
+    // Show warning if reels were adjusted
+    if (data._reelWarnings && data._reelWarnings.length) {
+      const warn = document.createElement('div');
+      warn.style.cssText = 'font-size:10px;color:var(--warning);padding:4px 8px;margin-bottom:4px;';
+      warn.textContent = 'Note: ' + data._reelWarnings.join(', ');
+      list.appendChild(warn);
+    }
     data.reels.forEach((r, i) => {
       const moodTag = r.mood ? `<span class="mood-tag ${r.mood}">${r.mood}</span>` : '';
       const duration = `${Math.round(r.endSec - r.startSec)}s`;
       const item = createResultItem(r.startSec, r.endSec, `Reel ${i+1}: ${r.title}`, r.reason, false, duration);
-      // Add mood tag
       if (moodTag) {
         const textEl = item.querySelector('.result-item-text');
         if (textEl) textEl.insertAdjacentHTML('beforeend', ' ' + moodTag);
@@ -771,12 +829,16 @@ document.getElementById('applySmartCuts').addEventListener('click', async () => 
 });
 
 // ---- AI CHAT ----
-let chatHistory = []; // [{role:'user'|'assistant', content:'...'}]
+let chatHistory = JSON.parse(sessionStorage.getItem('icanChatHistory') || '[]');
 
 function showChatPanel() {
   const hasTranscript = state.transcriptData && state.transcriptData.length > 0;
   document.getElementById('chatNotice').style.display = hasTranscript ? 'none' : 'block';
   document.getElementById('chatPanel').style.display = hasTranscript ? 'block' : 'none';
+  // Restore previous chat messages from sessionStorage
+  if (hasTranscript && chatHistory.length > 0 && document.getElementById('chatMessages').children.length <= 1) {
+    chatHistory.forEach(msg => addChatMessage(msg.role === 'user' ? 'user' : 'assistant', msg.content));
+  }
 }
 
 function addChatMessage(role, content) {
@@ -835,6 +897,7 @@ async function sendChatMessage(message) {
 
   addChatMessage('user', message);
   chatHistory.push({ role: 'user', content: message });
+  sessionStorage.setItem('icanChatHistory', JSON.stringify(chatHistory));
   addChatLoading();
 
   const settings = state.settings;
@@ -860,6 +923,7 @@ async function sendChatMessage(message) {
     if (!res.ok) throw new Error(await res.text());
     const data = await res.json();
     chatHistory.push({ role: 'assistant', content: data.reply });
+    sessionStorage.setItem('icanChatHistory', JSON.stringify(chatHistory));
     addChatMessage('assistant', data.reply);
   } catch(err) {
     removeChatLoading();
@@ -997,10 +1061,22 @@ document.getElementById('btnTranscribeManual').addEventListener('click', async (
 // ---- Import from Premiere Pro Transcript ----
 document.getElementById('btnImportPPTranscript').addEventListener('click', async () => {
   setStatus('Importing Premiere Pro transcript...', 'working');
-  const result = await callExtendScript('importPPTranscript', {});
+
+  // Try up to 3 times with 2s delay — Premiere transcript may still be generating
+  let result;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    result = await callExtendScript('importPPTranscript', {});
+    if (result.success && result.segments && result.segments.length > 0) break;
+    if (attempt < 3) {
+      setStatus(`No transcript found yet — retrying (${attempt}/3)...`, 'working');
+      await new Promise(r => setTimeout(r, 2000));
+    }
+  }
+
   if (result.success && result.segments && result.segments.length > 0) {
     state.transcriptData = result.segments;
     renderScript(state.transcriptData);
+    scheduleAutoSave();
     document.getElementById('scriptSection').style.display = 'block';
     document.getElementById('analyzeNotice').style.display = 'none';
     document.getElementById('analyzePanel').style.display = 'block';
@@ -1009,7 +1085,7 @@ document.getElementById('btnImportPPTranscript').addEventListener('click', async
     showChatPanel();
     setStatus(`Imported ${result.count} segments from Premiere Pro`, 'success');
   } else if (result.count === 0) {
-    setStatus('No transcript found in Premiere Pro. Use Text > Transcribe Sequence first.', 'error');
+    setStatus('No transcript found. In Premiere: Edit > Captions > Transcribe Sequence, wait for it to finish, then try again.', 'error');
   } else {
     setStatus('Import error: ' + (result.error || 'unknown'), 'error');
   }
@@ -1530,16 +1606,19 @@ function updateApiStatusDots() {
 
 // ---- Export / Import Settings (for team sharing) ----
 document.getElementById('btnExportSettings').addEventListener('click', () => {
-  // Export all settings EXCEPT sensitive keys — coworkers need their own keys
+  // Export settings WITHOUT sensitive API keys — coworkers need their own
   const exportable = { ...state.settings };
-  // Keep keys optional — user can choose to share them (they're in the exported file)
+  delete exportable.openaiKey;
+  delete exportable.groqKey;
+  delete exportable.anthropicKey;
+  delete exportable.geminiKey;
   const blob = new Blob([JSON.stringify(exportable, null, 2)], { type: 'application/json' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
   a.download = 'ican-settings.json';
   a.click();
   URL.revokeObjectURL(a.href);
-  setStatus('Settings exported — share the file with your team', 'success');
+  setStatus('Settings exported (API keys excluded for safety) — share with your team', 'success');
 });
 
 document.getElementById('btnImportSettings').addEventListener('click', () => {

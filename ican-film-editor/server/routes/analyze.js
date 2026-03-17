@@ -130,26 +130,32 @@ RULES:
       analysisData.fillers = analysisData.fillers.map(f => ({ ...f, startSec: clamp(f.startSec), endSec: clamp(f.endSec) }));
     }
     if (analysisData.reels) {
+      const reelWarnings = [];
       analysisData.reels = analysisData.reels
         .map((r, i) => {
           let start = clamp(r.startSec);
           let end   = clamp(r.endSec);
-          const duration = end - start;
+          const originalDuration = end - start;
           // Enforce minimum 60 seconds — extend end if too short
-          if (duration < 60) {
+          if (originalDuration < 60) {
             end = Math.min(totalDuration, start + 60);
-            // If still too short (near end of video), shift start back
             if (end - start < 60) {
               start = Math.max(0, end - 60);
             }
+            reelWarnings.push(`Reel ${i+1} was ${Math.round(originalDuration)}s → extended to ${Math.round(end - start)}s`);
           }
           // Cap at 90 seconds
           if (end - start > 90) {
+            reelWarnings.push(`Reel ${i+1} was ${Math.round(originalDuration)}s → trimmed to 90s`);
             end = start + 90;
           }
           return { ...r, startSec: start, endSec: end, title: r.title || `Reel ${i + 1}` };
         })
-        .slice(0, options.reelCount || 10);
+        .slice(0, options.reelCount === 'auto' ? 10 : (options.reelCount || 10));
+      if (reelWarnings.length) {
+        analysisData._reelWarnings = reelWarnings;
+        console.log('[Analyze] Reel adjustments:', reelWarnings.join('; '));
+      }
     }
 
     console.log(`[Analyze/${resolvedProvider}] Done.`);

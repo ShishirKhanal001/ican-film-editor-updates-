@@ -24,6 +24,8 @@ function hostBridge(funcName, paramsJson) {
       case 'getAudioTrackInfo':   result = getAudioTrackInfo(params); break;
       case 'applyTrackMixerPlugins': result = applyTrackMixerPlugins(params); break;
       case 'addRangeMarkers':     result = addRangeMarkers(params); break;
+      case 'setInOutPoints':     result = setInOutPoints(params); break;
+      case 'duplicateTimelineRange': result = duplicateTimelineRange(params); break;
       default: result = { success: false, error: 'Unknown function: ' + funcName };
     }
     return JSON.stringify(result);
@@ -162,6 +164,22 @@ function jumpToTime(params) {
   }
 }
 
+// ---- Set in/out points for range preview ----
+function setInOutPoints(params) {
+  try {
+    var seq = getActiveSequence();
+    var inTime = new Time();
+    inTime.seconds = params.inSec;
+    var outTime = new Time();
+    outTime.seconds = params.outSec;
+    seq.setInPoint(inTime.ticks);
+    seq.setOutPoint(outTime.ticks);
+    return { success: true };
+  } catch(e) {
+    return { success: false, error: e.toString() };
+  }
+}
+
 // ---- Add colored markers to timeline ----
 function addMarkers(params) {
   try {
@@ -216,11 +234,18 @@ function cutSegments(params) {
 }
 
 function deleteClipsInRange(seq, startTicks, endTicks) {
+  // Remove any clip that overlaps the range (not just fully contained)
+  // After razor cuts, the clip between razors should be exactly in range
   for (var t = 0; t < seq.videoTracks.numTracks; t++) {
     var track = seq.videoTracks[t];
     for (var c = track.clips.numItems - 1; c >= 0; c--) {
       var clip = track.clips[c];
-      if (clip.start.ticks >= startTicks && clip.end.ticks <= endTicks) {
+      // Clip overlaps range if it doesn't end before start AND doesn't start after end
+      var clipStart = parseInt(clip.start.ticks, 10);
+      var clipEnd   = parseInt(clip.end.ticks, 10);
+      var rangeStart = parseInt(startTicks, 10);
+      var rangeEnd   = parseInt(endTicks, 10);
+      if (clipEnd > rangeStart && clipStart < rangeEnd) {
         clip.remove(true, true);
       }
     }
@@ -229,7 +254,11 @@ function deleteClipsInRange(seq, startTicks, endTicks) {
     var atrack = seq.audioTracks[t2];
     for (var ac = atrack.clips.numItems - 1; ac >= 0; ac--) {
       var aclip = atrack.clips[ac];
-      if (aclip.start.ticks >= startTicks && aclip.end.ticks <= endTicks) {
+      var aClipStart = parseInt(aclip.start.ticks, 10);
+      var aClipEnd   = parseInt(aclip.end.ticks, 10);
+      var aRangeStart = parseInt(startTicks, 10);
+      var aRangeEnd   = parseInt(endTicks, 10);
+      if (aClipEnd > aRangeStart && aClipStart < aRangeEnd) {
         aclip.remove(true, true);
       }
     }

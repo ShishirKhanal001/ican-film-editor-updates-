@@ -1,7 +1,7 @@
 {
-  "version": "1.2.0",
+  "version": "1.2.1",
   "channel": "stable",
   "releaseDate": "2026-03-16",
-  "releaseNotes": "v1.2.0 — AI Chat panel, Smart Cut Suggestions, Enhanced Analysis (mood/style selector, auto reel count), 15+ language prompt hints for better transcription.",
+  "releaseNotes": "v1.2.1 — Cancel buttons, cut overlap fix, chat persistence, PP import retry, API key safety, short video guard, reel warnings, range preview.",
   "updateUrl": "https://raw.githubusercontent.com/ShishirKhanal001/ican-film-editor-updates-/main/version.json"
 }
