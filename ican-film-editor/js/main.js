@@ -295,6 +295,7 @@ async function runTranscription(audioPath, sourcePaths, useSourceFiles) {
     document.getElementById('analyzePanel').style.display = 'block';
     document.getElementById('captionsNotice').style.display = 'none';
     document.getElementById('captionsPanel').style.display = 'block';
+    showChatPanel();
 
     setStatus(`Transcription complete — ${state.transcriptData.length} segments`, 'success');
     hideProgress();
@@ -502,12 +503,18 @@ document.getElementById('searchScript').addEventListener('input', function() {
 });
 
 // ---- ANALYZE ----
-let reelCount = 2;
+let reelCount = 'auto'; // 'auto' | 1..10
 document.getElementById('reelMinus').addEventListener('click', () => {
-  if (reelCount > 1) { reelCount--; document.getElementById('reelCount').textContent = reelCount; }
+  if (reelCount === 'auto') { reelCount = 10; }
+  else if (reelCount > 1) { reelCount--; }
+  else { reelCount = 'auto'; }
+  document.getElementById('reelCount').textContent = reelCount === 'auto' ? 'Auto' : reelCount;
 });
 document.getElementById('reelPlus').addEventListener('click', () => {
-  if (reelCount < 10) { reelCount++; document.getElementById('reelCount').textContent = reelCount; }
+  if (reelCount === 'auto') { reelCount = 1; }
+  else if (reelCount < 10) { reelCount++; }
+  else { reelCount = 'auto'; }
+  document.getElementById('reelCount').textContent = reelCount === 'auto' ? 'Auto' : reelCount;
 });
 
 document.getElementById('btnAnalyze').addEventListener('click', async () => {
@@ -539,8 +546,10 @@ document.getElementById('btnAnalyze').addEventListener('click', async () => {
       summary: document.getElementById('optSummary').checked,
       highlights: document.getElementById('optHighlights').checked,
       fillers: document.getElementById('optFillers').checked,
+      smartCuts: document.getElementById('optSmartCuts').checked,
       reels: document.getElementById('optReels').checked,
-      reelCount
+      reelCount: reelCount === 'auto' ? 'auto' : reelCount,
+      reelMood: document.getElementById('reelMood').value
     };
 
     const res = await fetch(`${SERVER_URL()}/analyze`, {
@@ -575,6 +584,11 @@ document.getElementById('btnAnalyze').addEventListener('click', async () => {
 });
 
 function renderAnalysisResults(data, opts) {
+  // Hide all blocks first
+  ['summaryBlock','highlightsBlock','fillersBlock','reelsBlock','smartCutsBlock'].forEach(id => {
+    document.getElementById(id).style.display = 'none';
+  });
+
   // Summary
   if (opts.summary && data.summary) {
     document.getElementById('summaryBlock').style.display = 'block';
@@ -588,6 +602,31 @@ function renderAnalysisResults(data, opts) {
     list.innerHTML = '';
     data.highlights.forEach(h => {
       list.appendChild(createResultItem(h.startSec, h.endSec, h.text, h.reason, false));
+    });
+  }
+
+  // Smart Cuts
+  if (opts.smartCuts && data.smartCuts && data.smartCuts.length) {
+    document.getElementById('smartCutsBlock').style.display = 'block';
+    const list = document.getElementById('smartCutsList');
+    list.innerHTML = '';
+    data.smartCuts.forEach(c => {
+      const item = document.createElement('div');
+      item.className = 'smart-cut-item';
+      item.dataset.start = c.startSec;
+      item.dataset.end = c.endSec;
+      item.dataset.confidence = c.confidence || 'medium';
+      item.innerHTML = `
+        <input type="checkbox" class="smart-cut-check" checked />
+        <span class="cut-type-tag ${(c.type || '').toLowerCase().replace(/[\s\/]/g,'')}">${c.type || 'Cut'}</span>
+        <span class="smart-cut-time">${formatTime(c.startSec)} → ${formatTime(c.endSec)}</span>
+        <span class="smart-cut-reason">${c.reason || ''}</span>
+      `;
+      item.addEventListener('click', (e) => {
+        if (e.target.type === 'checkbox') return;
+        callExtendScript('jumpToTime', { timeSec: c.startSec });
+      });
+      list.appendChild(item);
     });
   }
 
@@ -607,7 +646,15 @@ function renderAnalysisResults(data, opts) {
     const list = document.getElementById('reelsList');
     list.innerHTML = '';
     data.reels.forEach((r, i) => {
-      list.appendChild(createResultItem(r.startSec, r.endSec, `Reel ${i+1}: ${r.title}`, r.reason, false, `${Math.round(r.endSec - r.startSec)}s`));
+      const moodTag = r.mood ? `<span class="mood-tag ${r.mood}">${r.mood}</span>` : '';
+      const duration = `${Math.round(r.endSec - r.startSec)}s`;
+      const item = createResultItem(r.startSec, r.endSec, `Reel ${i+1}: ${r.title}`, r.reason, false, duration);
+      // Add mood tag
+      if (moodTag) {
+        const textEl = item.querySelector('.result-item-text');
+        if (textEl) textEl.insertAdjacentHTML('beforeend', ' ' + moodTag);
+      }
+      list.appendChild(item);
     });
   }
 }
@@ -645,7 +692,9 @@ function createResultItem(startSec, endSec, text, subtext, hasCheckbox, badge) {
 
   item.addEventListener('click', (e) => {
     if (e.target.type === 'checkbox') return;
+    // Jump to start and set in/out points so user can preview the range
     callExtendScript('jumpToTime', { timeSec: startSec });
+    callExtendScript('setInOutPoints', { inSec: startSec, outSec: endSec });
   });
 
   return item;
@@ -702,6 +751,140 @@ document.getElementById('btnCreateReels').addEventListener('click', async () => 
   } else {
     setStatus('Reel creation failed: ' + result.error, 'error');
   }
+});
+
+// ---- SMART CUTS ----
+document.getElementById('selectAllSmartCuts').addEventListener('click', () => {
+  document.querySelectorAll('#smartCutsList .smart-cut-check').forEach(cb => cb.checked = true);
+});
+
+document.getElementById('applySmartCuts').addEventListener('click', async () => {
+  const cuts = [];
+  document.querySelectorAll('#smartCutsList .smart-cut-item').forEach(item => {
+    const cb = item.querySelector('.smart-cut-check');
+    if (cb?.checked) cuts.push({ startSec: +item.dataset.start, endSec: +item.dataset.end });
+  });
+  if (!cuts.length) return;
+  setStatus(`Cutting ${cuts.length} smart-cut segments...`, 'working');
+  const result = await callExtendScript('cutSegments', { segments: cuts });
+  setStatus(result.success ? `Cut ${cuts.length} segments` : 'Cut failed: ' + result.error, result.success ? 'success' : 'error');
+});
+
+// ---- AI CHAT ----
+let chatHistory = []; // [{role:'user'|'assistant', content:'...'}]
+
+function showChatPanel() {
+  const hasTranscript = state.transcriptData && state.transcriptData.length > 0;
+  document.getElementById('chatNotice').style.display = hasTranscript ? 'none' : 'block';
+  document.getElementById('chatPanel').style.display = hasTranscript ? 'block' : 'none';
+}
+
+function addChatMessage(role, content) {
+  const container = document.getElementById('chatMessages');
+  const msg = document.createElement('div');
+  msg.className = `chat-msg ${role === 'user' ? 'chat-user' : 'chat-ai'}`;
+
+  // Parse timestamps in AI responses (format: MM:SS or H:MM:SS) and make them clickable
+  let html = content;
+  if (role === 'assistant') {
+    html = content.replace(/(\d{1,2}:\d{2}(?::\d{2})?)/g, (match) => {
+      const parts = match.split(':').map(Number);
+      let secs;
+      if (parts.length === 3) secs = parts[0] * 3600 + parts[1] * 60 + parts[2];
+      else secs = parts[0] * 60 + parts[1];
+      return `<span class="chat-timestamp" data-sec="${secs}">${match}</span>`;
+    });
+    // Convert newlines to <br>
+    html = html.replace(/\n/g, '<br>');
+  }
+
+  msg.innerHTML = `<div class="chat-bubble">${html}</div>`;
+
+  // Make timestamps clickable
+  msg.querySelectorAll('.chat-timestamp').forEach(ts => {
+    ts.addEventListener('click', () => {
+      callExtendScript('jumpToTime', { timeSec: +ts.dataset.sec });
+    });
+  });
+
+  container.appendChild(msg);
+  container.scrollTop = container.scrollHeight;
+}
+
+function addChatLoading() {
+  const container = document.getElementById('chatMessages');
+  const loading = document.createElement('div');
+  loading.className = 'chat-msg chat-ai';
+  loading.id = 'chatLoading';
+  loading.innerHTML = `<div class="chat-bubble chat-loading"><div class="dot-pulse"><span></span><span></span><span></span></div> Thinking...</div>`;
+  container.appendChild(loading);
+  container.scrollTop = container.scrollHeight;
+}
+
+function removeChatLoading() {
+  const el = document.getElementById('chatLoading');
+  if (el) el.remove();
+}
+
+async function sendChatMessage(message) {
+  if (!message.trim()) return;
+  if (!state.transcriptData || !state.transcriptData.length) {
+    addChatMessage('assistant', 'Please transcribe a video first so I have context to work with.');
+    return;
+  }
+
+  addChatMessage('user', message);
+  chatHistory.push({ role: 'user', content: message });
+  addChatLoading();
+
+  const settings = state.settings;
+  try {
+    const res = await fetch(`${SERVER_URL()}/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        message,
+        chatHistory: chatHistory.slice(-10), // last 10 messages for context
+        segments: state.transcriptData,
+        provider: settings.aiProvider || 'groq',
+        anthropicKey: settings.anthropicKey,
+        groqKey: settings.groqKey,
+        geminiKey: settings.geminiKey,
+        ollamaModel: settings.ollamaModel,
+        ollamaUrl: settings.ollamaUrl
+      })
+    });
+
+    removeChatLoading();
+
+    if (!res.ok) throw new Error(await res.text());
+    const data = await res.json();
+    chatHistory.push({ role: 'assistant', content: data.reply });
+    addChatMessage('assistant', data.reply);
+  } catch(err) {
+    removeChatLoading();
+    addChatMessage('assistant', 'Error: ' + err.message);
+  }
+}
+
+document.getElementById('btnChatSend').addEventListener('click', () => {
+  const input = document.getElementById('chatInput');
+  sendChatMessage(input.value);
+  input.value = '';
+});
+
+document.getElementById('chatInput').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    document.getElementById('btnChatSend').click();
+  }
+});
+
+// Quick prompts
+document.querySelectorAll('.chat-quick').forEach(btn => {
+  btn.addEventListener('click', () => {
+    sendChatMessage(btn.dataset.prompt);
+  });
 });
 
 // ---- BRANDING ----
@@ -823,6 +1006,7 @@ document.getElementById('btnImportPPTranscript').addEventListener('click', async
     document.getElementById('analyzePanel').style.display = 'block';
     document.getElementById('captionsNotice').style.display = 'none';
     document.getElementById('captionsPanel').style.display = 'block';
+    showChatPanel();
     setStatus(`Imported ${result.count} segments from Premiere Pro`, 'success');
   } else if (result.count === 0) {
     setStatus('No transcript found in Premiere Pro. Use Text > Transcribe Sequence first.', 'error');
@@ -1239,6 +1423,7 @@ function checkForRestoreableTranscript() {
           document.getElementById('analyzePanel').style.display = 'block';
           document.getElementById('captionsNotice').style.display = 'none';
           document.getElementById('captionsPanel').style.display = 'block';
+          showChatPanel();
           document.getElementById('restoreBanner').classList.remove('visible');
           setStatus(`Transcript restored (${data.length} segments)`, 'success');
         });

@@ -75,12 +75,16 @@
       <span>Branding</span>
     </button>
     <button class="tab-btn" data-tab="captions">
-      <span class="tab-icon">💬</span>
+      <span class="tab-icon">📝</span>
       <span>Captions</span>
     </button>
     <button class="tab-btn" data-tab="audio">
       <span class="tab-icon">🔊</span>
       <span>Audio</span>
+    </button>
+    <button class="tab-btn" data-tab="chat">
+      <span class="tab-icon">💬</span>
+      <span>AI Chat</span>
     </button>
   </div>
 
@@ -99,6 +103,17 @@
           <option value="es">Spanish</option>
           <option value="so">Somali</option>
           <option value="sw">Swahili</option>
+          <option value="om">Oromo</option>
+          <option value="pt">Portuguese</option>
+          <option value="hi">Hindi</option>
+          <option value="ur">Urdu</option>
+          <option value="tr">Turkish</option>
+          <option value="ko">Korean</option>
+          <option value="ja">Japanese</option>
+          <option value="zh">Chinese</option>
+          <option value="de">German</option>
+          <option value="it">Italian</option>
+          <option value="ru">Russian</option>
         </select>
       </div>
       <div class="form-row">
@@ -192,17 +207,35 @@
           <span>✂️ Detect Fillers & Dead Air</span>
         </label>
         <label class="checkbox-row">
+          <input type="checkbox" id="optSmartCuts" checked />
+          <span>🎬 Smart Cut Suggestions</span>
+        </label>
+        <label class="checkbox-row">
           <input type="checkbox" id="optReels" checked />
           <span>📱 Suggest Vertical Reels</span>
         </label>
       </div>
 
-      <div class="form-row" id="reelCountRow">
-        <label>Number of Reels to Create</label>
-        <div class="number-input-row">
-          <button class="btn btn-sm" id="reelMinus">−</button>
-          <span id="reelCount">2</span>
-          <button class="btn btn-sm" id="reelPlus">+</button>
+      <!-- Reel Options -->
+      <div id="reelOptionsRow">
+        <div class="form-row">
+          <label>Reel Count</label>
+          <div class="number-input-row">
+            <button class="btn btn-sm" id="reelMinus">−</button>
+            <span id="reelCount">Auto</span>
+            <button class="btn btn-sm" id="reelPlus">+</button>
+          </div>
+        </div>
+        <div class="form-row">
+          <label>Reel Style</label>
+          <select id="reelMood" class="input-full">
+            <option value="best">Best Moments (General)</option>
+            <option value="motivational">Motivational / Inspiring</option>
+            <option value="emotional">Emotional / Heartfelt</option>
+            <option value="funny">Funny / Entertaining</option>
+            <option value="educational">Educational / Informative</option>
+            <option value="action">Action / High Energy</option>
+          </select>
         </div>
       </div>
 
@@ -230,6 +263,18 @@
           <button class="btn btn-xs" id="markHighlights">📍 Mark In/Out in Timeline</button>
         </div>
         <div class="result-list" id="highlightsList"></div>
+      </div>
+
+      <!-- Smart Cuts -->
+      <div class="result-block" id="smartCutsBlock" style="display:none">
+        <div class="result-header">
+          <span>🎬 Smart Cut Suggestions</span>
+          <div>
+            <button class="btn btn-xs" id="selectAllSmartCuts">All</button>
+            <button class="btn btn-xs danger" id="applySmartCuts">Apply Cuts</button>
+          </div>
+        </div>
+        <div class="result-list" id="smartCutsList"></div>
       </div>
 
       <!-- Fillers -->
@@ -415,6 +460,30 @@
     <div class="btn-group">
       <button class="btn btn-sm" id="btnSaveAudioPreset">💾 Save Preset</button>
       <button class="btn btn-primary" id="btnApplyAudio">🔊 Apply to Mixer</button>
+    </div>
+  </div>
+
+  <!-- ===== TAB: AI CHAT ===== -->
+  <div class="tab-content" id="tab-chat">
+    <div class="notice" id="chatNotice">
+      <span>⚠️</span> Transcribe your video first, then chat with AI about it.
+    </div>
+    <div id="chatPanel" style="display:none">
+      <div class="chat-messages" id="chatMessages">
+        <div class="chat-msg chat-ai">
+          <div class="chat-bubble">I have your transcript loaded. Ask me anything — find moments, suggest cuts, create compilations, or get creative editing ideas.</div>
+        </div>
+      </div>
+      <div class="chat-quick-prompts">
+        <button class="btn btn-xs chat-quick" data-prompt="Find the most motivational moments and suggest a cut list">Motivational cuts</button>
+        <button class="btn btn-xs chat-quick" data-prompt="Find the most emotional and heartfelt moments">Emotional moments</button>
+        <button class="btn btn-xs chat-quick" data-prompt="Find the best quotes and one-liners">Best quotes</button>
+        <button class="btn btn-xs chat-quick" data-prompt="Which parts are slow or boring that I should cut?">Slow parts</button>
+      </div>
+      <div class="chat-input-row">
+        <input type="text" id="chatInput" placeholder="Ask about your video..." class="input-full" autocomplete="off" />
+        <button class="btn btn-primary" id="btnChatSend">Send</button>
+      </div>
     </div>
   </div>
 

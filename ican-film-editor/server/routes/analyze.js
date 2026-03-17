@@ -31,11 +31,31 @@ router.post('/', async (req, res) => {
     ? (segments[segments.length - 1].endSec || segments[segments.length - 1].timeSec)
     : 0;
 
+  // Mood labels for reel style
+  const MOOD_LABELS = {
+    best: 'the best, most engaging moments overall',
+    motivational: 'motivational, inspiring, uplifting moments',
+    emotional: 'emotional, heartfelt, touching moments',
+    funny: 'funny, entertaining, humorous moments',
+    educational: 'educational, informative, knowledge-sharing moments',
+    action: 'high-energy, action-packed, exciting moments'
+  };
+
+  const reelMood = options.reelMood || 'best';
+  const moodDesc = MOOD_LABELS[reelMood] || MOOD_LABELS.best;
+
   const taskList = [];
-  if (options.summary)    taskList.push('1. SUMMARY: A 2-3 sentence summary of the entire content');
-  if (options.highlights) taskList.push('2. HIGHLIGHTS: The most engaging/catchy/important moments');
-  if (options.fillers)    taskList.push('3. FILLERS: Filler words, long pauses, repeated phrases to remove');
-  if (options.reels)      taskList.push(`4. REELS: The best ${options.reelCount || 2} clips for vertical social media Reels/TikTok/Shorts. EACH REEL MUST BE 60-90 SECONDS LONG (minimum 60 seconds, maximum 90 seconds). Pick moments with a complete story arc.`);
+  let taskNum = 1;
+  if (options.summary)    taskList.push(`${taskNum++}. SUMMARY: A 2-3 sentence summary of the entire content`);
+  if (options.highlights) taskList.push(`${taskNum++}. HIGHLIGHTS: The most engaging/catchy/important moments`);
+  if (options.smartCuts)  taskList.push(`${taskNum++}. SMART_CUTS: Detect segments that should be cut — long pauses (>3s gaps between segments), repeated takes ("let me say that again", restarts), off-topic tangents, low-energy filler-heavy sections, and natural transition points. For each, specify the type (Pause/Retake/Tangent/Low Energy/Transition) and confidence (high/medium).`);
+  if (options.fillers)    taskList.push(`${taskNum++}. FILLERS: Filler words, long pauses, repeated phrases to remove`);
+  if (options.reels) {
+    const reelCountStr = options.reelCount === 'auto'
+      ? 'Suggest the optimal number of reels (2-8) based on content length and quality'
+      : `Exactly ${options.reelCount} clips`;
+    taskList.push(`${taskNum++}. REELS: ${reelCountStr} for vertical social media Reels/TikTok/Shorts. Focus on ${moodDesc}. EACH REEL MUST BE 60-90 SECONDS LONG (minimum 60 seconds, maximum 90 seconds). Pick moments with a complete story arc. Tag each reel with mood: "${reelMood}".`);
+  }
 
   const prompt = `You are a professional video editor's AI assistant analyzing a timestamped transcript.
 
@@ -51,8 +71,9 @@ Respond ONLY with a valid JSON object (no markdown, no extra text):
 {
   "summary": "string (if requested, else omit)",
   "highlights": [{ "startSec": number, "endSec": number, "text": "quoted text", "reason": "why engaging" }],
+  "smartCuts": [{ "startSec": number, "endSec": number, "type": "Pause|Retake|Tangent|Low Energy|Transition", "reason": "why to cut", "confidence": "high|medium" }],
   "fillers": [{ "startSec": number, "endSec": number, "text": "filler text", "type": "filler word|pause|repetition|off-topic" }],
-  "reels": [{ "startSec": number, "endSec": number, "title": "catchy title", "reason": "why great reel" }]
+  "reels": [{ "startSec": number, "endSec": number, "title": "catchy title", "reason": "why great reel", "mood": "${reelMood}" }]
 }
 
 RULES:
@@ -60,8 +81,10 @@ RULES:
 - Empty arrays [] for items not requested
 - REELS MUST be 60-90 seconds each (endSec - startSec must be >= 60 and <= 90). This is mandatory.
 - Reels should be self-contained stories/moments that work without context
+- Reels should match the requested mood/style: ${moodDesc}
 - Highlights should be the most engaging, emotional, or impactful moments (10-30 seconds each)
-- Fillers: "um", "uh", repeated sentences, very long silent gaps, off-topic rambling`;
+- Fillers: "um", "uh", repeated sentences, very long silent gaps, off-topic rambling
+- Smart cuts: identify clear edit points where content quality drops — be specific about why`;
 
   try {
     let rawResponse;
@@ -99,6 +122,9 @@ RULES:
     const clamp = v => Math.max(0, Math.min(totalDuration, v || 0));
     if (analysisData.highlights) {
       analysisData.highlights = analysisData.highlights.map(h => ({ ...h, startSec: clamp(h.startSec), endSec: clamp(h.endSec) }));
+    }
+    if (analysisData.smartCuts) {
+      analysisData.smartCuts = analysisData.smartCuts.map(c => ({ ...c, startSec: clamp(c.startSec), endSec: clamp(c.endSec) }));
     }
     if (analysisData.fillers) {
       analysisData.fillers = analysisData.fillers.map(f => ({ ...f, startSec: clamp(f.startSec), endSec: clamp(f.endSec) }));

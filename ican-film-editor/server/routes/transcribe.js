@@ -186,6 +186,21 @@ function resolveLanguageForProvider(language, provider) {
 const WHISPER_PROMPTS = {
   'am': 'ይህ በአማርኛ የሆነ ቃለ መጠይቅ ወይም ውይይት ነው። This is an interview or discussion in Amharic.',
   'ti': 'እዚ ብትግርኛ ዝኾነ ቃለ መሕተት ወይ ዘተ እዩ። This is an interview or discussion in Tigrinya.',
+  'om': 'Kun walgahii ykn marii afaan Oromootiin taasifame. This is an interview or discussion in Oromo.',
+  'so': 'Tani waa wareeysi ama wadahadal af Soomaali ah. This is an interview or discussion in Somali.',
+  'pt': 'Esta é uma entrevista ou discussão em Português. This is an interview or discussion in Portuguese.',
+  'hi': 'यह हिंदी में एक साक्षात्कार या चर्चा है। This is an interview or discussion in Hindi.',
+  'ur': 'یہ اردو میں ایک انٹرویو یا بحث ہے۔ This is an interview or discussion in Urdu.',
+  'tr': 'Bu Türkçe bir röportaj veya tartışmadır. This is an interview or discussion in Turkish.',
+  'ko': '이것은 한국어로 진행된 인터뷰 또는 토론입니다. This is an interview or discussion in Korean.',
+  'ja': 'これは日本語のインタビューまたはディスカッションです。This is an interview or discussion in Japanese.',
+  'zh': '这是一段中文采访或讨论。This is an interview or discussion in Chinese.',
+  'de': 'Dies ist ein Interview oder eine Diskussion auf Deutsch. This is an interview or discussion in German.',
+  'it': 'Questa è un\'intervista o una discussione in Italiano. This is an interview or discussion in Italian.',
+  'ru': 'Это интервью или обсуждение на русском языке. This is an interview or discussion in Russian.',
+  'fr': 'Ceci est une interview ou une discussion en Français. This is an interview or discussion in French.',
+  'ar': 'هذه مقابلة أو مناقشة باللغة العربية. This is an interview or discussion in Arabic.',
+  'es': 'Esta es una entrevista o discusión en Español. This is an interview or discussion in Spanish.',
 };
 
 async function transcribeFile(client, model, filePath, language, timeOffset = 0, provider = 'groq') {

@@ -181,6 +181,121 @@ app.get('/progress', (req, res) => {
   res.json(global.icanProgress);
 });
 
+// ---- AI Chat endpoint ----
+app.post('/chat', async (req, res) => {
+  const {
+    message, chatHistory, segments,
+    provider, anthropicKey, groqKey, geminiKey,
+    ollamaModel, ollamaUrl
+  } = req.body;
+
+  if (!message) return res.status(400).json({ error: 'No message provided.' });
+  if (!segments || !segments.length) return res.status(400).json({ error: 'No transcript loaded.' });
+
+  const resolvedProvider = provider || (groqKey ? 'groq' : geminiKey ? 'gemini' : 'anthropic');
+
+  // Build transcript context (condensed)
+  const transcriptText = segments
+    .map(s => `[${formatTimeSec(s.timeSec)}-${formatTimeSec(s.endSec || s.timeSec + 3)}] ${s.english}`)
+    .join('\n');
+
+  const systemPrompt = `You are a creative AI video editing assistant. You have access to a full timestamped transcript of a video.
+
+TRANSCRIPT:
+${transcriptText}
+
+Your job is to help the editor by:
+- Finding specific moments by topic, emotion, or speaker
+- Suggesting cut lists for compilations (motivational, emotional, funny, etc.)
+- Identifying the best quotes and one-liners
+- Suggesting creative edits (mix different speakers, rearrange sections)
+- Pointing out slow/boring parts to cut
+
+ALWAYS include timestamps (MM:SS format) when referencing specific moments.
+When suggesting cuts, format as a numbered list with timestamps and descriptions.
+Be concise and actionable — this is a professional editing tool.`;
+
+  const messages = [
+    { role: 'system', content: systemPrompt },
+    ...(chatHistory || []).slice(-8),
+    { role: 'user', content: message }
+  ];
+
+  try {
+    let reply;
+
+    if (resolvedProvider === 'groq') {
+      if (!groqKey) return res.status(400).json({ error: 'Groq API key required.' });
+      const OpenAI = require('openai');
+      const client = new OpenAI({ apiKey: groqKey, baseURL: 'https://api.groq.com/openai/v1' });
+
+      const MODELS = ['meta-llama/llama-4-scout-17b-16e-instruct', 'qwen/qwen3-32b', 'llama-3.3-70b-versatile'];
+      for (const model of MODELS) {
+        try {
+          const r = await client.chat.completions.create({ model, messages, max_tokens: 2048, temperature: 0.4 });
+          reply = r.choices[0].message.content.trim();
+          break;
+        } catch(e) {
+          if (!e.message.includes('429') && !e.message.includes('rate_limit') && !e.message.includes('model_not_found')) throw e;
+        }
+      }
+      if (!reply) throw new Error('All Groq models failed — try again later.');
+
+    } else if (resolvedProvider === 'gemini') {
+      if (!geminiKey) return res.status(400).json({ error: 'Gemini API key required.' });
+      const { GoogleGenerativeAI } = require('@google/generative-ai');
+      const genAI = new GoogleGenerativeAI(geminiKey);
+      const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+      const r = await model.generateContent(systemPrompt + '\n\nUser: ' + message);
+      reply = r.response.text().trim();
+
+    } else if (resolvedProvider === 'ollama') {
+      const fetch = require('node-fetch');
+      const url = ollamaUrl || 'http://localhost:11434';
+      const model = ollamaModel || 'llama3.2';
+      const r = await fetch(`${url}/v1/chat/completions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model, messages, stream: false })
+      });
+      if (!r.ok) throw new Error(`Ollama error: ${r.status}`);
+      const data = await r.json();
+      reply = data.choices[0].message.content.trim();
+
+    } else {
+      if (!anthropicKey) return res.status(400).json({ error: 'Anthropic API key required.' });
+      const Anthropic = require('@anthropic-ai/sdk');
+      const client = new Anthropic({ apiKey: anthropicKey });
+      const r = await client.messages.create({
+        model: 'claude-sonnet-4-6',
+        max_tokens: 2048,
+        system: systemPrompt,
+        messages: [
+          ...(chatHistory || []).slice(-8),
+          { role: 'user', content: message }
+        ]
+      });
+      reply = r.content[0].text.trim();
+    }
+
+    console.log(`[Chat/${resolvedProvider}] Reply: ${reply.substring(0, 80)}...`);
+    res.json({ reply });
+
+  } catch(err) {
+    console.error('[Chat Error]', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+function formatTimeSec(secs) {
+  if (!secs && secs !== 0) return '00:00';
+  const h = Math.floor(secs / 3600);
+  const m = Math.floor((secs % 3600) / 60);
+  const s = Math.floor(secs % 60);
+  if (h > 0) return `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+  return `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+}
+
 // ---- Routes ----
 app.use('/transcribe', transcribeRoute);
 app.use('/translate',  translateRoute);
