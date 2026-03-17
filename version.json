@@ -1,6 +1,6 @@
 {
-  "version": "1.0.0",
+  "version": "1.2.0",
   "releaseDate": "2026-03-16",
-  "releaseNotes": "Initial release — Transcription, Translation, AI Analysis, Reels, Branding, Captions, Audio. Supports Claude, Gemini, and Ollama.",
-  "downloadUrl": null
+  "releaseNotes": "v1.2.0 — AI Chat panel, Smart Cut Suggestions, Enhanced Analysis (mood/style selector, auto reel count), 15+ language prompt hints for better transcription.",
+  "downloadUrl": "https://github.com/ShishirKhanal001/ican-film-editor-updates-/releases/download/v1.2.0/ican-film-editor-v1.2.0.zip"
 }
