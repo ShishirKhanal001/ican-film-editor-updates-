@@ -146,6 +146,10 @@ app.post('/save-file', (req, res) => {
 
 // ---- Stop server (called when Premiere closes the panel) ----
 app.post('/stop', (req, res) => {
+  // Only shut down if the request includes the CEP confirm flag
+  if (!req.body || req.body.source !== 'cep-panel') {
+    return res.json({ success: false, message: 'Ignored — not from CEP panel' });
+  }
   res.json({ success: true, message: 'Server shutting down...' });
   console.log('\n  [Server] Shutdown requested by panel. Goodbye!\n');
   setTimeout(() => process.exit(0), 500);

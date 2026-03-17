@@ -1340,12 +1340,14 @@ window.addEventListener('load', async () => {
 // ---- Shutdown server when panel closes (Premiere Pro exit) ----
 window.addEventListener('unload', () => {
   try {
-    // Use sendBeacon for reliable delivery during page unload
+    // Only stop the server when running inside Adobe CEP (not in a browser)
+    if (typeof CSInterface === 'undefined') return;
     const url = `${SERVER_URL()}/stop`;
+    const body = JSON.stringify({ source: 'cep-panel' });
     if (navigator.sendBeacon) {
-      navigator.sendBeacon(url, '{}');
+      navigator.sendBeacon(url, new Blob([body], { type: 'application/json' }));
     } else {
-      fetch(url, { method: 'POST', keepalive: true, headers: { 'Content-Type': 'application/json' }, body: '{}' });
+      fetch(url, { method: 'POST', keepalive: true, headers: { 'Content-Type': 'application/json' }, body });
     }
   } catch(e) {}
 });
