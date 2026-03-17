@@ -832,6 +832,38 @@ document.getElementById('btnImportPPTranscript').addEventListener('click', async
 });
 
 // ---- AUDIO TAB: Track Mixer ----
+
+// Built-in Premiere Pro audio effects for search autocomplete
+const AUDIO_PLUGINS = [
+  // Amplitude
+  'Amplify', 'Channel Mixer', 'DeEsser', 'Dynamics', 'Hard Limiter',
+  'Multiband Compressor', 'Normalize', 'Single-band Compressor', 'Tube-modeled Compressor',
+  // Delay and Echo
+  'Analog Delay', 'Delay', 'Echo',
+  // Filter and EQ
+  'Bass', 'Treble', 'FFT Filter', 'Graphic Equalizer (10 Bands)',
+  'Graphic Equalizer (20 Bands)', 'Graphic Equalizer (30 Bands)',
+  'Notch Filter', 'Parametric Equalizer', 'Scientific Filter',
+  // Modulation
+  'Chorus', 'Flanger', 'Phaser',
+  // Noise Reduction
+  'Adaptive Noise Reduction', 'Automatic Click Remover', 'DeHummer',
+  'DeNoise', 'Hiss Reduction', 'Noise Reduction',
+  // Reverb
+  'Convolution Reverb', 'Reverb', 'Studio Reverb', 'Surround Reverb',
+  // Special
+  'Distortion', 'Guitar Suite', 'Mastering', 'Vocal Enhancer',
+  // Stereo Imagery
+  'Center Channel Extractor', 'Stereo Expander',
+  // Time and Pitch
+  'Automatic Pitch Correction', 'Manual Pitch Correction',
+  'Pitch Shifter', 'Stretch and Pitch',
+  // Volume
+  'Balance', 'Channel Volume', 'Volume',
+  // Common third-party
+  'Waves NS1', 'Waves RVox', 'Waves C1', 'iZotope RX', 'FabFilter Pro-Q'
+];
+
 let audioTrackState = []; // [{index, name, plugins: ['name1', 'name2']}]
 
 document.getElementById('btnLoadTracks').addEventListener('click', async () => {
@@ -860,47 +892,70 @@ function renderTrackMixer() {
   const container = document.getElementById('trackMixerContainer');
   container.innerHTML = '';
 
+  if (audioTrackState.length === 0) {
+    container.innerHTML = '<div class="mixer-empty-state">Click "Load Tracks" to see your audio tracks</div>';
+    return;
+  }
+
   audioTrackState.forEach((track, ti) => {
-    const row = document.createElement('div');
-    row.className = 'track-mixer-row';
+    const strip = document.createElement('div');
+    strip.className = 'mixer-strip';
 
+    // Header
     const header = document.createElement('div');
-    header.className = 'track-mixer-header';
+    header.className = 'mixer-strip-header';
     header.innerHTML = `
-      <span class="track-mixer-name">${track.name}</span>
-      <span class="track-mixer-badge">${track.plugins.length} plugins</span>
+      <span class="mixer-strip-name" title="${track.name}">${track.name}</span>
+      <span class="mixer-strip-count">${track.plugins.length} fx</span>
     `;
-    row.appendChild(header);
+    strip.appendChild(header);
 
-    const pluginsDiv = document.createElement('div');
-    pluginsDiv.className = 'track-mixer-plugins';
+    // Plugin slots
+    const slotsDiv = document.createElement('div');
+    slotsDiv.className = 'mixer-strip-slots';
 
     track.plugins.forEach((pluginName, pi) => {
       const slot = document.createElement('div');
-      slot.className = 'track-plugin-slot';
+      slot.className = 'mixer-slot';
+      slot.title = pluginName;
       slot.innerHTML = `
-        <span class="plugin-slot-num">${pi + 1}</span>
-        <input type="text" value="${pluginName}" data-track="${ti}" data-plugin="${pi}" />
-        <button class="btn btn-xs danger" data-track="${ti}" data-plugin="${pi}">✕</button>
+        <span class="mixer-slot-label">${pluginName}</span>
+        <button class="mixer-slot-remove" data-track="${ti}" data-plugin="${pi}">✕</button>
       `;
-      // Edit plugin name inline
-      slot.querySelector('input').addEventListener('change', function() {
-        audioTrackState[+this.dataset.track].plugins[+this.dataset.plugin] = this.value;
-      });
-      // Remove plugin
-      slot.querySelector('button').addEventListener('click', function() {
+      slot.querySelector('.mixer-slot-remove').addEventListener('click', function() {
         audioTrackState[+this.dataset.track].plugins.splice(+this.dataset.plugin, 1);
         renderTrackMixer();
       });
-      pluginsDiv.appendChild(slot);
+      slotsDiv.appendChild(slot);
     });
 
-    if (track.plugins.length === 0) {
-      pluginsDiv.innerHTML = '<div style="text-align:center;color:var(--text-muted);padding:6px;font-size:10px">No plugins — use Quick Add below</div>';
+    // Empty slot placeholders (min 3 visible)
+    const emptyCount = Math.max(0, 3 - track.plugins.length);
+    for (let i = 0; i < emptyCount; i++) {
+      const empty = document.createElement('div');
+      empty.className = 'mixer-slot-empty';
+      empty.textContent = '\u2014';
+      slotsDiv.appendChild(empty);
     }
+    strip.appendChild(slotsDiv);
 
-    row.appendChild(pluginsDiv);
-    container.appendChild(row);
+    // Add button at bottom
+    const addDiv = document.createElement('div');
+    addDiv.className = 'mixer-strip-add';
+    const addBtn = document.createElement('button');
+    addBtn.textContent = '+';
+    addBtn.title = 'Add plugin to ' + track.name;
+    addBtn.addEventListener('click', () => {
+      document.getElementById('pluginTargetTrack').value = String(ti);
+      const searchInput = document.getElementById('pluginSearch');
+      searchInput.focus();
+      searchInput.value = '';
+      showPluginDropdown('');
+    });
+    addDiv.appendChild(addBtn);
+    strip.appendChild(addDiv);
+
+    container.appendChild(strip);
   });
 }
 
@@ -923,6 +978,7 @@ document.getElementById('btnAddPluginToTrack').addEventListener('click', () => {
     audioTrackState[+target].plugins.push(pluginName);
   }
   document.getElementById('pluginSearch').value = '';
+  document.getElementById('pluginDropdown').style.display = 'none';
   renderTrackMixer();
   setStatus(`Added "${pluginName}"`, 'success');
 });
@@ -956,6 +1012,94 @@ document.getElementById('btnApplyAudio').addEventListener('click', async () => {
     setStatus('Error: ' + result.error, 'error');
   }
 });
+
+// ---- PLUGIN SEARCH AUTOCOMPLETE ----
+const pluginSearchInput = document.getElementById('pluginSearch');
+const pluginDropdown = document.getElementById('pluginDropdown');
+let dropdownActiveIndex = -1;
+
+function showPluginDropdown(query) {
+  const q = query.toLowerCase().trim();
+  if (q.length === 0) {
+    pluginDropdown.style.display = 'none';
+    return;
+  }
+
+  const matches = AUDIO_PLUGINS.filter(p => p.toLowerCase().includes(q));
+  if (matches.length === 0) {
+    pluginDropdown.innerHTML = '<div class="plugin-dropdown-empty">No match — press Enter to use custom name</div>';
+    pluginDropdown.style.display = 'block';
+    dropdownActiveIndex = -1;
+    return;
+  }
+
+  pluginDropdown.innerHTML = matches.map((name, i) => {
+    const idx = name.toLowerCase().indexOf(q);
+    const before = name.slice(0, idx);
+    const match = name.slice(idx, idx + q.length);
+    const after = name.slice(idx + q.length);
+    return `<div class="plugin-dropdown-item" data-index="${i}" data-name="${name}">
+      ${before}<span class="match-highlight">${match}</span>${after}
+    </div>`;
+  }).join('');
+
+  pluginDropdown.style.display = 'block';
+  dropdownActiveIndex = -1;
+
+  pluginDropdown.querySelectorAll('.plugin-dropdown-item').forEach(el => {
+    el.addEventListener('mousedown', function(e) {
+      e.preventDefault();
+      pluginSearchInput.value = this.dataset.name;
+      pluginDropdown.style.display = 'none';
+    });
+  });
+}
+
+pluginSearchInput.addEventListener('input', function() {
+  showPluginDropdown(this.value);
+});
+
+pluginSearchInput.addEventListener('focus', function() {
+  if (this.value.trim()) showPluginDropdown(this.value);
+});
+
+pluginSearchInput.addEventListener('blur', function() {
+  setTimeout(() => { pluginDropdown.style.display = 'none'; }, 150);
+});
+
+pluginSearchInput.addEventListener('keydown', function(e) {
+  const items = pluginDropdown.querySelectorAll('.plugin-dropdown-item');
+  if (!items.length) {
+    if (e.key === 'Enter') document.getElementById('btnAddPluginToTrack').click();
+    return;
+  }
+
+  if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    dropdownActiveIndex = Math.min(dropdownActiveIndex + 1, items.length - 1);
+    updateDropdownActive(items);
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    dropdownActiveIndex = Math.max(dropdownActiveIndex - 1, -1);
+    updateDropdownActive(items);
+  } else if (e.key === 'Enter') {
+    e.preventDefault();
+    if (dropdownActiveIndex >= 0 && items[dropdownActiveIndex]) {
+      pluginSearchInput.value = items[dropdownActiveIndex].dataset.name;
+      pluginDropdown.style.display = 'none';
+    }
+    document.getElementById('btnAddPluginToTrack').click();
+  } else if (e.key === 'Escape') {
+    pluginDropdown.style.display = 'none';
+  }
+});
+
+function updateDropdownActive(items) {
+  items.forEach((el, i) => {
+    el.classList.toggle('active', i === dropdownActiveIndex);
+    if (i === dropdownActiveIndex) el.scrollIntoView({ block: 'nearest' });
+  });
+}
 
 function closeModal(id) {
   document.getElementById(id).style.display = 'none';

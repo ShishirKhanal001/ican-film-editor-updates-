@@ -373,42 +373,40 @@
   <!-- ===== TAB: AUDIO ===== -->
   <div class="tab-content" id="tab-audio">
     <div class="section">
-      <h3 class="section-title">Track Mixer — Plugin Chains</h3>
-      <p class="section-desc">Assign audio plugins to each track's mixer. Click "Load Tracks" to see your timeline's audio tracks.</p>
+      <h3 class="section-title">Track Mixer</h3>
+      <p class="section-desc">Vertical mixer strips — like Premiere's Audio Track Mixer.</p>
       <button class="btn btn-sm" id="btnLoadTracks" style="width:100%;justify-content:center;margin-bottom:8px">🔄 Load Tracks from Timeline</button>
     </div>
 
-    <!-- Track mixer grid - populated dynamically -->
-    <div id="trackMixerContainer">
-      <!-- Will be populated with track rows when user clicks Load Tracks -->
-      <div class="section" style="text-align:center;color:var(--text-muted);padding:20px">
-        Click "Load Tracks" to see your audio tracks
-      </div>
+    <!-- Horizontal scroll container for vertical strips -->
+    <div id="trackMixerContainer" class="mixer-strip-container">
+      <div class="mixer-empty-state">Click "Load Tracks" to see your audio tracks</div>
     </div>
 
-    <div class="section">
-      <h3 class="section-title">Quick Add Plugin</h3>
-      <div class="input-browse-row" style="margin-bottom:8px">
-        <input type="text" id="pluginSearch" placeholder="Search plugin name..." class="input-full" />
+    <!-- Plugin search with autocomplete -->
+    <div class="section" style="position:relative">
+      <h3 class="section-title">Add Plugin</h3>
+      <div class="plugin-search-wrap">
+        <input type="text" id="pluginSearch" placeholder="Search effects..." class="input-full" autocomplete="off" />
+        <div id="pluginDropdown" class="plugin-dropdown" style="display:none"></div>
       </div>
-      <div class="field-hint">Type a plugin name (e.g. "Waves NS1") and drag it to a track above, or select a track and click Add.</div>
       <div class="form-row" style="margin-top:6px">
-        <label>Add to Track</label>
+        <label>To Track</label>
         <select id="pluginTargetTrack" class="input-full">
           <option value="all">All Tracks</option>
         </select>
       </div>
-      <button class="btn btn-sm" id="btnAddPluginToTrack" style="width:100%;justify-content:center;margin-top:6px">+ Add Plugin to Track</button>
+      <button class="btn btn-sm" id="btnAddPluginToTrack" style="width:100%;justify-content:center;margin-top:6px">+ Add to Track</button>
     </div>
 
     <div class="section">
-      <h3 class="section-title">Saved Presets</h3>
+      <h3 class="section-title">Presets</h3>
       <div class="form-row">
         <label>Active Preset</label>
         <select id="audioPreset">
-          <option value="dialogue">Dialogue (Voice)</option>
+          <option value="dialogue">Dialogue</option>
           <option value="music">Music</option>
-          <option value="sfx">SFX / Ambience</option>
+          <option value="sfx">SFX</option>
           <option value="custom">Custom</option>
         </select>
       </div>
@@ -416,7 +414,7 @@
 
     <div class="btn-group">
       <button class="btn btn-sm" id="btnSaveAudioPreset">💾 Save Preset</button>
-      <button class="btn btn-primary" id="btnApplyAudio">🔊 Apply to Track Mixer</button>
+      <button class="btn btn-primary" id="btnApplyAudio">🔊 Apply to Mixer</button>
     </div>
   </div>
 

@@ -903,73 +903,169 @@ body:not([data-brand="lucy"]) .update-banner {
 .modal-tab-content.active { display: block; }
 
 /* ================================================
-   TRACK MIXER (Audio tab)
+   TRACK MIXER — Vertical Strip Layout (Audio tab)
    ================================================ */
-.track-mixer-row {
+.mixer-strip-container {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding: 8px 6px;
+  min-height: 160px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-light) transparent;
+}
+
+.mixer-empty-state {
+  width: 100%;
+  text-align: center;
+  color: var(--text-muted);
+  padding: 40px 10px;
+  font-size: 11px;
+}
+
+.mixer-strip {
+  flex: 0 0 72px;
+  min-width: 72px;
   background: var(--bg-section);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  margin-bottom: 8px;
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
 }
 
-.track-mixer-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 8px 12px;
+.mixer-strip-header {
   background: var(--bg-card);
   border-bottom: 1px solid var(--border);
-  cursor: pointer;
+  padding: 6px 4px;
+  text-align: center;
 }
-
-.track-mixer-header:hover { background: var(--bg-hover); }
-
-.track-mixer-name {
-  font-size: 12px;
+.mixer-strip-name {
+  font-size: 9px;
   font-weight: 700;
   color: var(--text-primary);
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mixer-strip-count {
+  font-size: 8px;
+  color: var(--text-muted);
+  margin-top: 2px;
+  display: block;
 }
 
-.track-mixer-badge {
-  font-size: 9px;
-  padding: 2px 8px;
-  border-radius: 10px;
-  background: var(--red-glow);
-  color: var(--red);
-  border: 1px solid var(--red-dark);
-  font-weight: 700;
-}
-
-.track-mixer-plugins {
-  padding: 6px 10px;
-}
-
-.track-plugin-slot {
+.mixer-strip-slots {
+  flex: 1;
   display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 5px 8px;
+  flex-direction: column;
+  gap: 3px;
+  padding: 4px;
+  min-height: 80px;
+}
+
+.mixer-slot {
   background: var(--bg-primary);
   border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  margin-bottom: 4px;
+  border-radius: 3px;
+  padding: 3px 4px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
 }
+.mixer-slot:hover { border-color: var(--border-light); }
 
-.track-plugin-slot .plugin-slot-num {
-  width: 16px;
-  height: 16px;
-  font-size: 8px;
-}
-
-.track-plugin-slot input {
+.mixer-slot-label {
   flex: 1;
+  font-size: 8px;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.2;
+}
+.mixer-slot-remove {
   background: none;
   border: none;
-  color: var(--text-secondary);
-  font-size: 11px;
-  outline: none;
+  color: var(--text-muted);
+  font-size: 8px;
+  cursor: pointer;
+  padding: 0 2px;
+  line-height: 1;
+  flex-shrink: 0;
 }
-.track-plugin-slot input:focus { color: var(--text-primary); }
+.mixer-slot-remove:hover { color: var(--danger); }
 
-.track-plugin-slot .btn-xs { padding: 1px 5px; font-size: 8px; }
+.mixer-slot-empty {
+  border: 1px dashed var(--border);
+  background: none;
+  padding: 3px 4px;
+  border-radius: 3px;
+  text-align: center;
+  font-size: 7px;
+  color: var(--text-muted);
+}
+
+.mixer-strip-add {
+  background: var(--bg-card);
+  border-top: 1px solid var(--border);
+  padding: 4px;
+  text-align: center;
+}
+.mixer-strip-add button {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text-muted);
+  font-size: 10px;
+  cursor: pointer;
+  width: 100%;
+  padding: 3px 0;
+}
+.mixer-strip-add button:hover {
+  color: var(--red);
+  border-color: var(--red-dark);
+}
+
+/* ================================================
+   PLUGIN SEARCH DROPDOWN
+   ================================================ */
+.plugin-search-wrap { position: relative; }
+
+.plugin-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  max-height: 180px;
+  overflow-y: auto;
+  background: var(--bg-card);
+  border: 1px solid var(--border-light);
+  border-top: none;
+  border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+  z-index: 100;
+  box-shadow: var(--shadow);
+}
+
+.plugin-dropdown-item {
+  padding: 5px 8px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.plugin-dropdown-item:hover,
+.plugin-dropdown-item.active {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+.plugin-dropdown-item .match-highlight {
+  color: var(--red);
+  font-weight: 700;
+}
+.plugin-dropdown-empty {
+  padding: 8px;
+  font-size: 10px;
+  color: var(--text-muted);
+  text-align: center;
+}
